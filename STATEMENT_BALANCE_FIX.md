@@ -6,13 +6,14 @@ Even though the backend was correctly detecting HDFC Bank statements and extract
 
 ```json
 {
-  "institution_name": null,        // ❌ Not saved
-  "current_balance": "0.00",       // ❌ Not saved
+  "institution_name": null, // ❌ Not saved
+  "current_balance": "0.00", // ❌ Not saved
   "account_name": "Default Account" // ❌ Wrong name
 }
 ```
 
 **Logs showed:**
+
 ```
 Detected HDFC Bank statement format ✓
 Parsing HDFC Bank statement format ✓
@@ -27,6 +28,7 @@ But the account still had `institution_name: null` and `current_balance: 0.00`.
 In `server/routers/upload.py`, the balance extraction was happening correctly, but it **wasn't being saved to the `BankAccount` record**:
 
 **Before (Buggy):**
+
 ```python
 # Extract balance ✓
 extracted_balance = extract_balance_from_statement(...)  # Returns: Decimal('50000.00')
@@ -47,6 +49,7 @@ The extracted balance was calculated but never used!
 ## The Solution
 
 ### 1. **Save Balance When Creating New Account**
+
 ```python
 bank_account = BankAccount(
     user_id=current_user.id,
@@ -57,6 +60,7 @@ bank_account = BankAccount(
 ```
 
 ### 2. **Update Balance When Account Exists**
+
 ```python
 if detected_account:
     bank_account = detected_account
@@ -65,6 +69,7 @@ if detected_account:
 ```
 
 ### 3. **Set Balance for Default Account**
+
 ```python
 if not bank_account:
     bank_account = BankAccount(
@@ -74,6 +79,7 @@ if not bank_account:
 ```
 
 ### 4. **Commit Changes**
+
 ```python
 # Commit any bank account changes before processing transactions
 db.commit()
@@ -82,6 +88,7 @@ db.commit()
 ## What Now Happens
 
 ### Upload Flow
+
 ```
 1. Parse statement file
    ↓
@@ -99,15 +106,16 @@ db.commit()
 ### Expected Result After Upload
 
 **API Response: `GET /api/bank-accounts`**
+
 ```json
 {
   "accounts": [
     {
       "id": "53f0e12b-...",
       "account_name": "HDFC Account",
-      "institution_name": "Hdfc",          // ✅ NOW POPULATED!
+      "institution_name": "Hdfc", // ✅ NOW POPULATED!
       "account_type": "credit_card",
-      "current_balance": "50000.00",       // ✅ NOW POPULATED!
+      "current_balance": "50000.00", // ✅ NOW POPULATED!
       "is_connected": false,
       "created_at": "2026-04-06T10:00:00Z"
     }
@@ -119,8 +127,9 @@ db.commit()
 ## Files Modified
 
 **server/routers/upload.py**
+
 - Line 277: Added `current_balance=extracted_balance` when creating new account
-- Line 280: Added balance update for existing accounts  
+- Line 280: Added balance update for existing accounts
 - Line 283: Updated log message to show balance
 - Line 299: Added `current_balance=extracted_balance` for default account
 - Line 306: Added `db.commit()` to save bank account changes
@@ -128,14 +137,16 @@ db.commit()
 ## Testing the Fix
 
 ### Manual Test
+
 1. Delete all bank accounts from your database
 2. Upload an HDFC Bank statement (or any statement with "HDFC" in transactions)
 3. Check bank accounts API: `GET /api/bank-accounts`
-4. Expected: 
+4. Expected:
    - `institution_name: "Hdfc"` ✓
    - `current_balance: <extracted amount>` ✓
 
 ### Verification Queries
+
 ```bash
 # Check bank account details
 docker-compose exec postgres psql -U fintra_user -d fintra_db -c \
@@ -147,6 +158,7 @@ docker-compose exec postgres psql -U fintra_user -d fintra_db -c \
 ```
 
 ### Log Messages After Fix
+
 ```
 Extracted balance: 50000.00, date: 2026-04-06
 Created new bank account for Hdfc: <id> with balance 50000.00
@@ -157,6 +169,7 @@ Found existing account for Hdfc: <id>, balance updated to 50000.00
 ## Impact
 
 ✅ **Users now see:**
+
 - Bank name displayed in accounts list
 - Current balance from statement shown in dashboard
 - Proper account identification for multiple banks

@@ -1,12 +1,18 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { useRecommendations } from "@/hooks/use-recommendations"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { 
+import { useState } from "react";
+import { useRecommendations } from "@/hooks/use-recommendations";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
   AlertCircle,
   TrendingUp,
   TrendingDown,
@@ -18,94 +24,110 @@ import {
   Lightbulb,
   Target,
   PiggyBank,
-  DollarSign
-} from "lucide-react"
-import { Recommendation } from "@/lib/api"
+  DollarSign,
+} from "lucide-react";
+import { Recommendation } from "@/lib/api";
 
 export default function RecommendationsPage() {
-  const { recommendations, isLoading, error, generateRecommendations, dismissRecommendation, implementRecommendation, snoozeRecommendation } = useRecommendations()
-  const [generating, setGenerating] = useState(false)
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
+  const {
+    recommendations,
+    isLoading,
+    error,
+    generateRecommendations,
+    dismissRecommendation,
+    implementRecommendation,
+    snoozeRecommendation,
+  } = useRecommendations();
+  const [generating, setGenerating] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   const handleGenerate = async () => {
-    setGenerating(true)
+    setGenerating(true);
     try {
-      await generateRecommendations()
+      await generateRecommendations();
     } catch {
       // Error handling is done in the hook
     } finally {
-      setGenerating(false)
+      setGenerating(false);
     }
-  }
+  };
 
   const handleDismiss = async (id: string) => {
     try {
-      await dismissRecommendation(id)
+      await dismissRecommendation(id);
     } catch (error) {
-      console.error("Failed to dismiss recommendation:", error)
+      console.error("Failed to dismiss recommendation:", error);
     }
-  }
+  };
 
   const handleImplement = async (id: string) => {
     try {
-      await implementRecommendation(id)
+      await implementRecommendation(id);
     } catch (error) {
-      console.error("Failed to implement recommendation:", error)
+      console.error("Failed to implement recommendation:", error);
     }
-  }
+  };
 
   const handleSnooze = async (id: string, days: number = 7) => {
     try {
-      await snoozeRecommendation(id, days)
+      await snoozeRecommendation(id, days);
     } catch (error) {
-      console.error("Failed to snooze recommendation:", error)
+      console.error("Failed to snooze recommendation:", error);
     }
-  }
+  };
 
   const getCategoryIcon = (category: string) => {
     switch (category.toLowerCase()) {
       case "budget":
-        return <DollarSign className="h-4 w-4" />
+        return <DollarSign className="h-4 w-4" />;
       case "goals":
-        return <Target className="h-4 w-4" />
+        return <Target className="h-4 w-4" />;
       case "savings":
-        return <PiggyBank className="h-4 w-4" />
+        return <PiggyBank className="h-4 w-4" />;
       default:
-        return <Lightbulb className="h-4 w-4" />
+        return <Lightbulb className="h-4 w-4" />;
     }
-  }
+  };
 
   const getImpactColor = (impact: string) => {
     switch (impact.toLowerCase()) {
       case "high":
-        return "text-red-600 bg-red-50"
+        return "text-red-600 bg-red-50";
       case "medium":
-        return "text-yellow-600 bg-yellow-50"
+        return "text-yellow-600 bg-yellow-50";
       case "low":
-        return "text-blue-600 bg-blue-50"
+        return "text-blue-600 bg-blue-50";
       default:
-        return "text-gray-600 bg-gray-50"
+        return "text-gray-600 bg-gray-50";
     }
-  }
+  };
 
   const parseActionSteps = (jsonString?: string): string[] => {
-    if (!jsonString) return []
+    if (!jsonString) return [];
     try {
-      return JSON.parse(jsonString)
+      return JSON.parse(jsonString);
     } catch {
-      return []
+      return [];
     }
-  }
+  };
 
   // Filter recommendations by selected category
   const filteredRecommendations = selectedCategory
-    ? recommendations.filter(r => r.category.toLowerCase() === selectedCategory.toLowerCase())
-    : recommendations
+    ? recommendations.filter(
+        (r) => r.category.toLowerCase() === selectedCategory.toLowerCase(),
+      )
+    : recommendations;
 
   // Group recommendations by impact
-  const highImpact = filteredRecommendations.filter(r => r.impact.toLowerCase() === "high")
-  const mediumImpact = filteredRecommendations.filter(r => r.impact.toLowerCase() === "medium")
-  const lowImpact = filteredRecommendations.filter(r => r.impact.toLowerCase() === "low")
+  const highImpact = filteredRecommendations.filter(
+    (r) => r.impact.toLowerCase() === "high",
+  );
+  const mediumImpact = filteredRecommendations.filter(
+    (r) => r.impact.toLowerCase() === "medium",
+  );
+  const lowImpact = filteredRecommendations.filter(
+    (r) => r.impact.toLowerCase() === "low",
+  );
 
   if (isLoading) {
     return (
@@ -115,7 +137,7 @@ export default function RecommendationsPage() {
           <p className="mt-4 text-gray-600">Loading recommendations...</p>
         </div>
       </div>
-    )
+    );
   }
 
   if (error) {
@@ -126,7 +148,7 @@ export default function RecommendationsPage() {
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       </div>
-    )
+    );
   }
 
   return (
@@ -139,7 +161,7 @@ export default function RecommendationsPage() {
             Actionable insights to improve your financial health
           </p>
         </div>
-        <Button 
+        <Button
           onClick={handleGenerate}
           disabled={generating}
           className="flex items-center gap-2"
@@ -191,28 +213,40 @@ export default function RecommendationsPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-gray-600">High Impact</CardTitle>
+            <CardTitle className="text-sm font-medium text-gray-600">
+              High Impact
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-red-600">{highImpact.length}</div>
+            <div className="text-3xl font-bold text-red-600">
+              {highImpact.length}
+            </div>
             <p className="text-xs text-gray-500 mt-1">Urgent actions needed</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-gray-600">Medium Impact</CardTitle>
+            <CardTitle className="text-sm font-medium text-gray-600">
+              Medium Impact
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-yellow-600">{mediumImpact.length}</div>
+            <div className="text-3xl font-bold text-yellow-600">
+              {mediumImpact.length}
+            </div>
             <p className="text-xs text-gray-500 mt-1">Consider these soon</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-gray-600">Low Impact</CardTitle>
+            <CardTitle className="text-sm font-medium text-gray-600">
+              Low Impact
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-blue-600">{lowImpact.length}</div>
+            <div className="text-3xl font-bold text-blue-600">
+              {lowImpact.length}
+            </div>
             <p className="text-xs text-gray-500 mt-1">Nice to have</p>
           </CardContent>
         </Card>
@@ -227,7 +261,9 @@ export default function RecommendationsPage() {
               All caught up!
             </h3>
             <p className="text-gray-600 text-center max-w-md">
-              You don&apos;t have any active recommendations right now. Click &quot;Generate New Recommendations&quot; to check for new insights.
+              You don&apos;t have any active recommendations right now. Click
+              &quot;Generate New Recommendations&quot; to check for new
+              insights.
             </p>
           </CardContent>
         </Card>
@@ -248,17 +284,17 @@ export default function RecommendationsPage() {
         </div>
       )}
     </div>
-  )
+  );
 }
 
 interface RecommendationCardProps {
-  recommendation: Recommendation
-  onDismiss: (id: string) => void
-  onImplement: (id: string) => void
-  onSnooze: (id: string, days: number) => void
-  getCategoryIcon: (category: string) => JSX.Element
-  getImpactColor: (impact: string) => string
-  parseActionSteps: (jsonString?: string) => string[]
+  recommendation: Recommendation;
+  onDismiss: (id: string) => void;
+  onImplement: (id: string) => void;
+  onSnooze: (id: string, days: number) => void;
+  getCategoryIcon: (category: string) => JSX.Element;
+  getImpactColor: (impact: string) => string;
+  parseActionSteps: (jsonString?: string) => string[];
 }
 
 function RecommendationCard({
@@ -270,8 +306,8 @@ function RecommendationCard({
   getImpactColor,
   parseActionSteps,
 }: RecommendationCardProps) {
-  const [expanded, setExpanded] = useState(false)
-  const actionSteps = parseActionSteps(recommendation.action_steps)
+  const [expanded, setExpanded] = useState(false);
+  const actionSteps = parseActionSteps(recommendation.action_steps);
 
   return (
     <Card>
@@ -301,7 +337,8 @@ function RecommendationCard({
               <div className="flex items-center gap-2 mt-3">
                 <TrendingDown className="h-4 w-4 text-green-600" />
                 <span className="text-sm font-medium text-green-600">
-                  Potential savings: ₹{recommendation.potential_savings.toLocaleString()}
+                  Potential savings: ₹
+                  {recommendation.potential_savings.toLocaleString()}
                 </span>
               </div>
             )}
@@ -333,7 +370,10 @@ function RecommendationCard({
           {expanded && (
             <ul className="space-y-2 mt-3 ml-4">
               {actionSteps.map((step, index) => (
-                <li key={index} className="flex items-start gap-2 text-sm text-gray-700">
+                <li
+                  key={index}
+                  className="flex items-start gap-2 text-sm text-gray-700"
+                >
                   <span className="flex-shrink-0 w-5 h-5 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-medium">
                     {index + 1}
                   </span>
@@ -375,5 +415,5 @@ function RecommendationCard({
         </Button>
       </CardContent>
     </Card>
-  )
+  );
 }

@@ -16,6 +16,7 @@ When uploading a statement file, the system was creating a **"Default Account"**
 The bug was in `server/routers/upload.py` in the bank account detection logic:
 
 **Before (Buggy Logic):**
+
 ```python
 # Step 1: Get first active account (finds existing "Default Account")
 bank_account = db.query(BankAccount).filter(...).first()
@@ -29,6 +30,7 @@ if not bank_account and bank_info.get("institution_name"):  # ❌ FALSE!
 ```
 
 **Why it failed:**
+
 - Line 1: Query found existing "Default Account" → `bank_account = <DefaultAccount>`
 - Line 2: Bank info detected successfully → `bank_info = {institution_name: "Hdfc"}`
 - Line 3: Condition evaluated as `if not <DefaultAccount>` → **FALSE**
@@ -38,6 +40,7 @@ if not bank_account and bank_info.get("institution_name"):  # ❌ FALSE!
 ## The Solution
 
 **After (Fixed Logic):**
+
 ```python
 # Step 1: Get first active account (may get existing "Default Account")
 bank_account = db.query(BankAccount).filter(...).first()
@@ -52,7 +55,7 @@ if bank_info and bank_info.get("institution_name"):
         BankAccount.institution_name.ilike(f"%{bank_info['institution_name']}%"),
         ...
     ).first()
-    
+
     if detected_account:
         bank_account = detected_account  # Use existing
     else:
@@ -64,6 +67,7 @@ if bank_info and bank_info.get("institution_name"):
 ```
 
 **Key improvements:**
+
 1. ✅ Bank detection happens REGARDLESS of whether default account exists
 2. ✅ New account is created WITH the detected bank `institution_name`
 3. ✅ Won't overwrite existing default account (uses it only if no bank detected)
@@ -72,6 +76,7 @@ if bank_info and bank_info.get("institution_name"):
 ## What Now Happens
 
 ### Scenario 1: First Upload (No Account Yet)
+
 ```
 1. Query finds no account → bank_account = None
 2. Bank detection finds HDFC
@@ -80,6 +85,7 @@ if bank_info and bank_info.get("institution_name"):
 ```
 
 ### Scenario 2: Subsequent Upload from Different Bank
+
 ```
 1. Query finds "HDFC Account" → bank_account = HdfcAccount
 2. Bank detection finds SBI from new statement
@@ -88,6 +94,7 @@ if bank_info and bank_info.get("institution_name"):
 ```
 
 ### Scenario 3: No Bank Detected (Generic CSV)
+
 ```
 1. Query finds existing account or None
 2. Bank detection returns None
@@ -98,12 +105,14 @@ if bank_info and bank_info.get("institution_name"):
 ## Testing the Fix
 
 ### Manual Test
+
 1. Delete all your bank accounts
 2. Upload a statement file (e.g., sample_transactions.csv with HDFC entries)
 3. Check bank accounts API: `GET /api/bank-accounts`
 4. Expected: Account should have `institution_name: "Hdfc"` ✅
 
 ### CLI Test
+
 ```bash
 # Inside server directory
 python -c "
@@ -130,6 +139,7 @@ The fix was deployed with `docker-compose restart backend`. The backend is now r
 ✅ **Users will now get proper bank accounts with correct institution names from statement uploads instead of generic "Default Account"**
 
 This enables:
+
 - Better account organization (multiple banks)
 - Proper transaction reconciliation
 - Account-specific features and displays

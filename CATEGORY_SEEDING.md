@@ -12,13 +12,13 @@ Categories are automatically managed for both new and existing users through two
 
 When the backend starts, **15 system categories** are automatically created (if they don't exist):
 
-| Type | Categories |
-|------|-----------|
-| **Income** | Salary |
-| **Needs** | Rent, Groceries, Utilities, Transportation, Healthcare |
-| **Wants** | Dining Out, Entertainment, Shopping, Travel |
-| **Savings** | Investments, Savings |
-| **Transfers** | Bank Transfer, Credit Card Payment |
+| Type          | Categories                                             |
+| ------------- | ------------------------------------------------------ |
+| **Income**    | Salary                                                 |
+| **Needs**     | Rent, Groceries, Utilities, Transportation, Healthcare |
+| **Wants**     | Dining Out, Entertainment, Shopping, Travel            |
+| **Savings**   | Investments, Savings                                   |
+| **Transfers** | Bank Transfer, Credit Card Payment                     |
 
 These system categories are shared across all users and are used as templates.
 
@@ -27,6 +27,7 @@ These system categories are shared across all users and are used as templates.
 ### 1. New Users (Signup)
 
 When a user registers:
+
 1. System categories are ensured to exist
 2. User gets a **personal copy** of all 15 system categories (with `user_id` set)
 3. User gets 13 **sample category mappings** (e.g., "salary" → Salary category)
@@ -37,6 +38,7 @@ When a user registers:
 ### 2. Existing Users (Login) - Auto-Recovery
 
 When an existing user logs in:
+
 1. System checks if they have any personal categories
 2. If they have **0 categories** (missing data), auto-seeds them
 3. User gets all 15 personal categories + 13 sample mappings
@@ -45,6 +47,7 @@ When an existing user logs in:
 **Benefit:** Existing users who didn't have categories now get them automatically.
 
 **When does this happen?**
+
 - Users who existed before the auto-seeding feature was added
 - Users whose categories were accidentally deleted
 - Any manual database cleanup scenarios
@@ -59,12 +62,14 @@ docker-compose exec backend python seed_existing_users.py
 ```
 
 **What it does:**
+
 1. Finds all users with 0 categories
 2. Creates system categories (if needed)
 3. Seeds all users who need categories
 4. Logs detailed progress and results
 
 **Output example:**
+
 ```
 Found 1 total users
 Creating/verifying system categories...
@@ -80,25 +85,28 @@ Seeding 1 users without categories...
 ## Database Schema
 
 ### System Categories
+
 ```sql
 -- System categories (shared, null user_id)
-SELECT * FROM categories 
-WHERE is_system = true 
+SELECT * FROM categories
+WHERE is_system = true
 AND user_id IS NULL;
 ```
 
 ### User Categories
+
 ```sql
 -- User's personal copy
-SELECT * FROM categories 
+SELECT * FROM categories
 WHERE user_id = 'user-uuid'
 AND is_system = false;
 ```
 
 ### Category Mappings
+
 ```sql
 -- Sample mappings for user
-SELECT * FROM category_mappings 
+SELECT * FROM category_mappings
 WHERE user_id = 'user-uuid';
 ```
 
@@ -109,7 +117,7 @@ WHERE user_id = 'user-uuid';
 1. **server/main.py**
    - Startup: Calls `create_system_categories()` to ensure system categories exist
 
-2. **server/auth/router.py** 
+2. **server/auth/router.py**
    - Login: Checks user's category count
    - If 0, calls `seed_all()` to restore categories silently
 
@@ -126,6 +134,7 @@ WHERE user_id = 'user-uuid';
 ## Usage Scenarios
 
 ### Scenario 1: Fresh Database Reset
+
 ```bash
 # Kill and restart everything
 docker-compose down -v  # Remove all volumes
@@ -138,6 +147,7 @@ docker-compose up
 ```
 
 ### Scenario 2: Existing User (Before Auto-seeding)
+
 ```bash
 # User logs in for first time after update
 # → System detects 0 categories
@@ -146,6 +156,7 @@ docker-compose up
 ```
 
 ### Scenario 3: Bulk Seeding Multiple Users
+
 ```bash
 # Several existing users need categories
 docker-compose exec backend python seed_existing_users.py
@@ -154,6 +165,7 @@ docker-compose exec backend python seed_existing_users.py
 ```
 
 ### Scenario 4: Manual Category Recovery
+
 ```bash
 # User accidentally deleted all their categories
 # → Next login triggers auto-seeding
@@ -165,21 +177,25 @@ docker-compose exec backend python seed_existing_users.py
 ### User has 0 categories after login
 
 **Check 1:** Verify system categories were created
+
 ```bash
 docker-compose exec postgres psql -U fintra_user -d fintra_db -c "SELECT COUNT(*) FROM categories WHERE is_system=true;"
 ```
 
 **Check 2:** Verify user categories exist
+
 ```bash
 docker-compose exec postgres psql -U fintra_user -d fintra_db -c "SELECT COUNT(*) FROM categories WHERE user_id='USER_ID';"
 ```
 
 **Check 3:** Run manual seed script
+
 ```bash
 docker-compose exec backend python seed_existing_users.py
 ```
 
 **Check 4:** Review server logs
+
 ```bash
 docker-compose logs backend | grep -i category
 ```
@@ -187,6 +203,7 @@ docker-compose logs backend | grep -i category
 ### Sample mappings not working
 
 Verify they were created:
+
 ```bash
 docker-compose exec postgres psql -U fintra_user -d fintra_db -c "SELECT * FROM category_mappings WHERE user_id='USER_ID';"
 ```
