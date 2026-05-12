@@ -2,7 +2,7 @@
 
 import { use, useState, useEffect } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { 
   TrendingUp, 
   ArrowLeft, 
@@ -16,7 +16,30 @@ import {
 } from "lucide-react"
 import { useTransaction } from "@/hooks/use-transactions"
 import { useCategories } from "@/hooks/use-categories"
-import { UpdateTransactionData } from "@/lib/api"
+import { UpdateTransactionData, Category } from "@/lib/api"
+
+const categoryTypeConfig: Record<
+  NonNullable<Category["category_type"]>,
+  { label: string; className: string }
+> = {
+  income:   { label: "Income",   className: "bg-green-500/15 text-green-400 border border-green-500/20" },
+  expense:  { label: "Expense",  className: "bg-red-500/15 text-red-400 border border-red-500/20" },
+  needs:    { label: "Needs",    className: "bg-blue-500/15 text-blue-400 border border-blue-500/20" },
+  wants:    { label: "Wants",    className: "bg-purple-500/15 text-purple-400 border border-purple-500/20" },
+  savings:  { label: "Savings",  className: "bg-yellow-500/15 text-yellow-400 border border-yellow-500/20" },
+  transfer: { label: "Transfer", className: "bg-slate-500/15 text-slate-300 border border-slate-500/20" },
+  both:     { label: "Both",     className: "bg-teal-500/15 text-teal-400 border border-teal-500/20" },
+}
+
+function CategoryTypeBadge({ type }: { type: NonNullable<Category["category_type"]> }) {
+  const config = categoryTypeConfig[type]
+  if (!config) return null
+  return (
+    <span className={`inline-flex items-start rounded px-2.5 pb-0.5 text-xs font-medium ${config.className}`}>
+      {config.label}
+    </span>
+  )
+}
 
 interface TransactionPageProps {
   params: Promise<{ id: string }>
@@ -25,8 +48,10 @@ interface TransactionPageProps {
 export default function TransactionDetailPage({ params }: TransactionPageProps) {
   const { id } = use(params)
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { transaction, isLoading, error, updateTransaction, deleteTransaction } = useTransaction(id)
   const { categories } = useCategories()
+  const returnTo = searchParams.get("returnTo") || "/transactions"
   
   const [isEditing, setIsEditing] = useState(false)
   const [editData, setEditData] = useState<UpdateTransactionData>({})
@@ -80,7 +105,7 @@ export default function TransactionDetailPage({ params }: TransactionPageProps) 
   const handleDelete = async () => {
     try {
       await deleteTransaction(id)
-      router.push("/transactions")
+      router.push(returnTo)
     } catch (err) {
       console.error("Failed to delete transaction:", err)
     }
@@ -99,7 +124,7 @@ export default function TransactionDetailPage({ params }: TransactionPageProps) 
       <div className="min-h-screen bg-[#020617]">
         <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-[#020617]/90 backdrop-blur-xl">
           <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-            <Link href="/transactions" className="flex items-center gap-2">
+            <Link href={returnTo} className="flex items-center gap-2">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-green-500">
                 <TrendingUp className="h-5 w-5 text-[#020617]" />
               </div>
@@ -112,7 +137,7 @@ export default function TransactionDetailPage({ params }: TransactionPageProps) 
             <div className="rounded-xl bg-red-500/10 border border-red-500/20 p-4 text-red-400">
               {error || "Transaction not found"}
             </div>
-            <Link href="/transactions" className="mt-4 inline-flex items-center gap-2 text-green-400 hover:text-green-300">
+            <Link href={returnTo} className="mt-4 inline-flex items-center gap-2 text-green-400 hover:text-green-300">
               <ArrowLeft className="h-4 w-4" />
               Back to Transactions
             </Link>
@@ -128,7 +153,7 @@ export default function TransactionDetailPage({ params }: TransactionPageProps) 
       <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-[#020617]/90 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-2">
-            <Link href="/transactions" className="flex items-center gap-2">
+            <Link href={returnTo} className="flex items-center gap-2">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-green-500">
                 <TrendingUp className="h-5 w-5 text-[#020617]" />
               </div>
@@ -168,7 +193,7 @@ export default function TransactionDetailPage({ params }: TransactionPageProps) 
       <main className="pt-24 pb-12">
         <div className="mx-auto max-w-3xl px-6">
           {/* Back Link */}
-          <Link href="/transactions" className="mb-6 inline-flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors">
+          <Link href={returnTo} className="mb-6 inline-flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors">
             <ArrowLeft className="h-4 w-4" />
             Back to Transactions
           </Link>
@@ -266,21 +291,32 @@ export default function TransactionDetailPage({ params }: TransactionPageProps) 
               <div>
                 <label className="block text-xs font-medium text-slate-400 uppercase mb-2">Category</label>
                 {isEditing ? (
-                  <select
-                    value={editData.category_id || ""}
-                    onChange={(e) => setEditData({ ...editData, category_id: e.target.value || null })}
-                    className="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 px-4 text-white focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
-                  >
-                    <option value="">Uncategorized</option>
-                    {categories.map((cat) => (
-                      <option key={cat.id} value={cat.id}>{cat.name}</option>
-                    ))}
-                  </select>
+                  <div className="space-y-2">
+                    <select
+                      value={editData.category_id || ""}
+                      onChange={(e) => setEditData({ ...editData, category_id: e.target.value || null })}
+                      className="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 px-4 text-white focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                    >
+                      <option value="">Uncategorized</option>
+                      {categories.map((cat) => (
+                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      ))}
+                    </select>
+                    {editData.category_id && (() => {
+                      const selected = categories.find(c => c.id === editData.category_id)
+                      return selected ? (
+                        <CategoryTypeBadge type={selected.category_type} />
+                      ) : null
+                    })()}
+                  </div>
                 ) : (
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-sm font-medium text-slate-300">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="inline-flex items-center rounded-sm bg-white/10 px-3 py-1 text-sm font-medium text-slate-300">
                       {transaction.category_name || "Uncategorized"}
                     </span>
+                    {transaction.category_type && (
+                      <CategoryTypeBadge type={transaction.category_type} />
+                    )}
                   </div>
                 )}
               </div>

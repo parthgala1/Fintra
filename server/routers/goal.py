@@ -194,9 +194,13 @@ def update_goal(
             detail=f"Goal {goal_id} not found",
         )
     
-    # Update fields
+    # Update fields. Ensure Decimal columns are not overwritten with floats
+    # coming from schema serialization.
     update_data = goal_data.model_dump(exclude_unset=True)
+    decimal_fields = {"target_amount", "current_amount", "monthly_contribution"}
     for field, value in update_data.items():
+        if field in decimal_fields and value is not None and not isinstance(value, Decimal):
+            value = Decimal(str(value))
         setattr(goal, field, value)
     
     # Recalculate progress if amounts changed

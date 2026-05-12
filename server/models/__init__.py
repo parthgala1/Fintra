@@ -7,6 +7,7 @@ from .transaction import Transaction, TransactionType, TransactionStatus
 
 # Budget Models
 from .budget import Budget, BudgetType, BudgetPeriod
+from .budget_history_analysis import BudgetHistoryAnalysis
 from .budget_report import BudgetReport
 from .budget_category_breakdown import BudgetCategoryBreakdown
 from .budget_scenario import BudgetScenario
@@ -48,6 +49,7 @@ __all__ = [
     "Budget",
     "BudgetType",
     "BudgetPeriod",
+    "BudgetHistoryAnalysis",
     "BudgetReport",
     "BudgetCategoryBreakdown",
     "BudgetScenario",

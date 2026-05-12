@@ -51,11 +51,15 @@ class TransactionCreate(TransactionBase):
 class TransactionUpdate(BaseModel):
     """Schema for updating a transaction."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     description: Optional[str] = None
     merchant_name: Optional[str] = None
+    amount: Optional[Decimal] = None
+    transaction_date: Optional[datetime] = Field(default=None, validation_alias='date')
     notes: Optional[str] = None
     category_id: Optional[UUID] = None
-    transaction_type: Optional[TransactionType] = None
+    transaction_type: Optional[TransactionType] = Field(default=None, validation_alias='type')
     status: Optional[TransactionStatus] = None
 
 
@@ -69,6 +73,7 @@ class TransactionResponse(TransactionBase):
     status: TransactionStatus
     posted_date: Optional[datetime] = None
     category_name: Optional[str] = None
+    category_type: Optional[str] = None
     bank_account_name: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None

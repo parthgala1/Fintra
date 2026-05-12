@@ -81,6 +81,11 @@ class Transaction(Base):
         return self.category.name if self.category else None
 
     @property
+    def category_type(self) -> Optional[str]:
+        """Get category type from relationship."""
+        return self.category.category_type if self.category else None
+
+    @property
     def bank_account_name(self) -> Optional[str]:
         """Get bank account name from relationship."""
         return self.bank_account.name if self.bank_account else None

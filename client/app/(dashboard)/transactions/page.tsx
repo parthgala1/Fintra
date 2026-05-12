@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { 
   TrendingUp, 
   Search, 
@@ -19,13 +20,29 @@ import { useCategories } from "@/hooks/use-categories"
 import { Transaction, TransactionParams } from "@/lib/api"
 
 export default function TransactionsPage() {
-  const [searchTerm, setSearchTerm] = useState("")
-  const [selectedType, setSelectedType] = useState<"all" | "income" | "expense">("all")
-  const [selectedCategory, setSelectedCategory] = useState<string>("")
-  const [selectedBankAccount, setSelectedBankAccount] = useState<string>("")
-  const [showFilters, setShowFilters] = useState(false)
-  const [dateRange, setDateRange] = useState({ start: "", end: "" })
-  const [currentPageSize, setCurrentPageSize] = useState(50)
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
+
+  const initialType = searchParams.get("type")
+  const parsedPage = Number(searchParams.get("page") || "1")
+  const parsedPageSize = Number(searchParams.get("pageSize") || "50")
+
+  const [searchTerm, setSearchTerm] = useState(searchParams.get("search") || "")
+  const [selectedType, setSelectedType] = useState<"all" | "income" | "expense">(
+    initialType === "income" || initialType === "expense" ? initialType : "all"
+  )
+  const [selectedCategory, setSelectedCategory] = useState<string>(searchParams.get("category") || "")
+  const [selectedBankAccount, setSelectedBankAccount] = useState<string>(searchParams.get("bankAccount") || "")
+  const [showFilters, setShowFilters] = useState(searchParams.get("showFilters") === "1")
+  const [dateRange, setDateRange] = useState({
+    start: searchParams.get("startDate") || "",
+    end: searchParams.get("endDate") || "",
+  })
+  const [currentPage, setCurrentPage] = useState(parsedPage > 0 ? parsedPage : 1)
+  const [currentPageSize, setCurrentPageSize] = useState(
+    parsedPageSize === 25 || parsedPageSize === 50 || parsedPageSize === 100 ? parsedPageSize : 50
+  )
 
   const { 
     transactions, 
@@ -41,8 +58,34 @@ export default function TransactionsPage() {
   const { categories } = useCategories()
 
   useEffect(() => {
+    const params = new URLSearchParams()
+    if (searchTerm) params.set("search", searchTerm)
+    if (selectedType !== "all") params.set("type", selectedType)
+    if (selectedCategory) params.set("category", selectedCategory)
+    if (selectedBankAccount) params.set("bankAccount", selectedBankAccount)
+    if (dateRange.start) params.set("startDate", dateRange.start)
+    if (dateRange.end) params.set("endDate", dateRange.end)
+    if (showFilters) params.set("showFilters", "1")
+    params.set("page", String(currentPage))
+    params.set("pageSize", String(currentPageSize))
+    router.replace(`${pathname}?${params.toString()}`)
+  }, [
+    searchTerm,
+    selectedType,
+    selectedCategory,
+    selectedBankAccount,
+    dateRange.start,
+    dateRange.end,
+    showFilters,
+    currentPage,
+    currentPageSize,
+    router,
+    pathname,
+  ])
+
+  useEffect(() => {
     const params: TransactionParams = {
-      page: 1,
+      page: currentPage,
       page_size: currentPageSize,
     }
     if (searchTerm) params.search = searchTerm
@@ -53,30 +96,48 @@ export default function TransactionsPage() {
     if (dateRange.end) params.end_date = dateRange.end
     
     fetchTransactions(params)
-  }, [searchTerm, selectedType, selectedCategory, selectedBankAccount, dateRange.start, dateRange.end, currentPageSize])
+  }, [
+    searchTerm,
+    selectedType,
+    selectedCategory,
+    selectedBankAccount,
+    dateRange.start,
+    dateRange.end,
+    currentPage,
+    currentPageSize,
+    fetchTransactions,
+  ])
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
   }
 
   const handlePageChange = (newPage: number) => {
-    const params: TransactionParams = {
-      page: newPage,
-      page_size: currentPageSize,
-    }
-    if (searchTerm) params.search = searchTerm
-    if (selectedType !== "all") params.type = selectedType
-    if (selectedCategory) params.category_id = selectedCategory
-    if (selectedBankAccount) params.bank_account_id = selectedBankAccount
-    if (dateRange.start) params.start_date = dateRange.start
-    if (dateRange.end) params.end_date = dateRange.end
-    
-    fetchTransactions(params)
+    setCurrentPage(newPage)
   }
 
   const handlePageSizeChange = (newPageSize: number) => {
     setCurrentPageSize(newPageSize)
+    setCurrentPage(1)
   }
+
+  const resetToFirstPage = () => setCurrentPage(1)
+
+  const buildReturnTo = () => {
+    const params = new URLSearchParams()
+    if (searchTerm) params.set("search", searchTerm)
+    if (selectedType !== "all") params.set("type", selectedType)
+    if (selectedCategory) params.set("category", selectedCategory)
+    if (selectedBankAccount) params.set("bankAccount", selectedBankAccount)
+    if (dateRange.start) params.set("startDate", dateRange.start)
+    if (dateRange.end) params.set("endDate", dateRange.end)
+    if (showFilters) params.set("showFilters", "1")
+    params.set("page", String(currentPage))
+    params.set("pageSize", String(currentPageSize))
+    return `${pathname}?${params.toString()}`
+  }
+
+  const returnTo = buildReturnTo()
 
   const formatDate = (dateString: string) => {
     try {
@@ -179,7 +240,10 @@ export default function TransactionsPage() {
                   type="text"
                   placeholder="Search transactions..."
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onChange={(e) => {
+                    setSearchTerm(e.target.value)
+                    resetToFirstPage()
+                  }}
                   className="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 pl-10 pr-4 text-sm text-white placeholder:text-slate-500 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
                 />
               </div>
@@ -187,7 +251,10 @@ export default function TransactionsPage() {
               <div className="flex gap-2">
                 <select
                   value={selectedType}
-                  onChange={(e) => setSelectedType(e.target.value as "all" | "income" | "expense")}
+                  onChange={(e) => {
+                    setSelectedType(e.target.value as "all" | "income" | "expense")
+                    resetToFirstPage()
+                  }}
                   className="rounded-xl border border-white/10 bg-white/5 py-2.5 px-4 text-sm text-white focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
                 >
                   <option value="all">All Types</option>
@@ -197,7 +264,10 @@ export default function TransactionsPage() {
 
                 <select
                    value={selectedCategory}
-                   onChange={(e) => setSelectedCategory(e.target.value)}
+                   onChange={(e) => {
+                     setSelectedCategory(e.target.value)
+                     resetToFirstPage()
+                   }}
                    className="rounded-xl border border-white/10 bg-white/5 py-2.5 px-4 text-sm text-white focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
                  >
                    <option value="">All Categories</option>
@@ -225,7 +295,10 @@ export default function TransactionsPage() {
                   <input
                     type="date"
                     value={dateRange.start}
-                    onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+                    onChange={(e) => {
+                      setDateRange({ ...dateRange, start: e.target.value })
+                      resetToFirstPage()
+                    }}
                     className="rounded-lg border border-white/10 bg-white/5 py-1.5 px-3 text-sm text-white focus:border-green-500 focus:outline-none"
                   />
                 </div>
@@ -234,12 +307,18 @@ export default function TransactionsPage() {
                   <input
                     type="date"
                     value={dateRange.end}
-                    onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+                    onChange={(e) => {
+                      setDateRange({ ...dateRange, end: e.target.value })
+                      resetToFirstPage()
+                    }}
                     className="rounded-lg border border-white/10 bg-white/5 py-1.5 px-3 text-sm text-white focus:border-green-500 focus:outline-none"
                   />
                 </div>
                 <button
-                  onClick={() => setDateRange({ start: "", end: "" })}
+                  onClick={() => {
+                    setDateRange({ start: "", end: "" })
+                    resetToFirstPage()
+                  }}
                   className="self-end rounded-lg bg-white/5 px-3 py-1.5 text-sm text-slate-400 hover:text-white transition-colors cursor-pointer"
                 >
                   Clear Dates
@@ -287,7 +366,7 @@ export default function TransactionsPage() {
                         {group.transactions.map((transaction) => (
                           <Link
                             key={transaction.id}
-                            href={`/transactions/${transaction.id}`}
+                            href={`/transactions/${transaction.id}?returnTo=${encodeURIComponent(returnTo)}`}
                             className="grid grid-cols-1 md:grid-cols-12 gap-2 md:gap-4 px-6 py-4 hover:bg-white/5 transition-colors cursor-pointer items-center"
                           >
                             <div className="col-span-3 text-sm text-slate-300">
@@ -336,7 +415,7 @@ export default function TransactionsPage() {
             <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-4">
                 <p className="text-sm text-slate-400">
-                  Showing {transactions.length > 0 ? ((page - 1) * currentPageSize) + 1 : 0} to {Math.min(page * currentPageSize, total)} of {total} transactions
+                  Showing {transactions.length > 0 ? ((currentPage - 1) * currentPageSize) + 1 : 0} to {Math.min(currentPage * currentPageSize, total)} of {total} transactions
                 </p>
                 <div className="flex items-center gap-2">
                   <label className="text-sm text-slate-400">Per page:</label>
@@ -354,31 +433,31 @@ export default function TransactionsPage() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => handlePageChange(1)}
-                  disabled={page === 1}
+                  disabled={currentPage === 1}
                   className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-400 hover:bg-white/10 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
                 >
                   First
                 </button>
                 <button
                   onClick={() => handlePageChange(page - 1)}
-                  disabled={page === 1}
+                  disabled={currentPage === 1}
                   className="rounded-lg border border-white/10 bg-white/5 p-2 text-slate-400 hover:bg-white/10 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </button>
                 <span className="text-sm text-slate-300 px-2">
-                  Page {page} of {totalPages}
+                  Page {currentPage} of {totalPages}
                 </span>
                 <button
-                  onClick={() => handlePageChange(page + 1)}
-                  disabled={page === totalPages}
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  disabled={currentPage === totalPages}
                   className="rounded-lg border border-white/10 bg-white/5 p-2 text-slate-400 hover:bg-white/10 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
                 >
                   <ChevronRight className="h-4 w-4" />
                 </button>
                 <button
                   onClick={() => handlePageChange(totalPages)}
-                  disabled={page === totalPages}
+                  disabled={currentPage === totalPages}
                   className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-400 hover:bg-white/10 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
                 >
                   Last

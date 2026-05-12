@@ -44,3 +44,6 @@ task*.md
 
 __pycache__
 /server/uploads
+
+.vscode
+.github

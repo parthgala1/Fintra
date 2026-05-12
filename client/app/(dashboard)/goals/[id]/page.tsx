@@ -18,13 +18,14 @@ import {
   Trash2
 } from "lucide-react"
 import { useGoal } from "@/hooks/use-goals"
+import { GoalStatusActions } from "@/components/goals/goal-status-actions"
 
 export default function GoalDetailPage() {
   const params = useParams()
   const router = useRouter()
   const goalId = params.id as string
   
-  const { goal, analysis, isLoading, error, recordContribution, deleteGoal } = useGoal(goalId)
+  const { goal, analysis, isLoading, error, recordContribution, deleteGoal, updateGoal } = useGoal(goalId)
 
   const [showContributionModal, setShowContributionModal] = useState(false)
   const [contributionAmount, setContributionAmount] = useState<number>(0)
@@ -75,6 +76,14 @@ export default function GoalDetailPage() {
       router.push("/goals")
     } catch (err: any) {
       alert(err.message || "Failed to delete goal")
+    }
+  }
+
+  const handleStatusChange = async (status: "active" | "paused" | "completed" | "cancelled") => {
+    try {
+      await updateGoal(goalId, { status })
+    } catch (err: any) {
+      alert(err.message || "Failed to update goal status")
     }
   }
 
@@ -296,6 +305,11 @@ export default function GoalDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Goal Details */}
+      <div className="mb-6">
+        <GoalStatusActions currentStatus={goal.status} onChangeStatus={handleStatusChange} />
+      </div>
 
       {/* Goal Details */}
       <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-sm">

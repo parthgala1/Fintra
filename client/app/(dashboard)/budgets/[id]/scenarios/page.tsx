@@ -15,9 +15,11 @@ import {
   GitBranch,
   AlertTriangle
 } from "lucide-react"
-import { api, Scenario, CreateScenarioData, ScenarioCalculation } from "@/lib/api"
+import { api, Scenario, CreateScenarioData, ScenarioCalculation, Budget, BudgetReport } from "@/lib/api"
 import { useCategories } from "@/hooks/use-categories"
 import { formatINR } from "@/lib/utils"
+import { ImpactPreviewPanel } from "@/components/budget/ImpactPreviewPanel"
+import { useScenarioSimulation } from "@/hooks/useScenarioSimulation"
 
 interface BudgetScenariosPageProps {
   params: Promise<{ id: string }>
@@ -27,7 +29,8 @@ export default function BudgetScenariosPage({ params }: BudgetScenariosPageProps
   const { id: budgetId } = use(params)
   const { categories } = useCategories()
   const [scenarios, setScenarios] = useState<Scenario[]>([])
-  const [budget, setBudget] = useState<{ name: string } | null>(null)
+  const [budget, setBudget] = useState<Budget | null>(null)
+  const [report, setReport] = useState<BudgetReport | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -46,14 +49,28 @@ export default function BudgetScenariosPage({ params }: BudgetScenariosPageProps
 
   const [categoryAdjustments, setCategoryAdjustments] = useState<Record<string, number>>({})
 
+  // Use the scenario simulation hook for real-time impact preview
+  const { simulation, isSimulating } = useScenarioSimulation({
+    budgetId,
+    categoryAdjustments,
+    currentBudget: budget ? {
+      total_amount: budget.total_amount,
+      needs_percentage: budget.needs_percentage,
+      wants_percentage: budget.wants_percentage,
+      savings_percentage: budget.savings_percentage
+    } : undefined
+  })
+
   const fetchData = async () => {
     try {
-      const [scenariosData, budgetData] = await Promise.all([
+      const [scenariosData, budgetData, reportData] = await Promise.all([
         api.getScenarios(budgetId),
-        api.getBudget(budgetId)
+        api.getBudget(budgetId),
+        api.getCurrentReport(budgetId).catch(() => null)
       ])
       setScenarios(scenariosData)
       setBudget(budgetData)
+      setReport(reportData)
     } catch (err) {
       setError("Failed to fetch scenarios")
     } finally {
@@ -321,7 +338,7 @@ export default function BudgetScenariosPage({ params }: BudgetScenariosPageProps
       {/* Create Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="mx-4 w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-[#0f172a] p-6">
+          <div className="mx-4 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-[#0f172a] p-6">
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-lg font-semibold text-white">Create Scenario</h3>
               <button 
@@ -332,56 +349,83 @@ export default function BudgetScenariosPage({ params }: BudgetScenariosPageProps
               </button>
             </div>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-slate-400 uppercase mb-2">Scenario Name</label>
-                <input
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="e.g., Reduce Dining Out"
-                  className="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 px-4 text-white placeholder:text-slate-500 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-400 uppercase mb-2">Description (optional)</label>
-                <textarea
-                  value={formData.description || ""}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  placeholder="Describe what this scenario explores..."
-                  rows={2}
-                  className="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 px-4 text-white placeholder:text-slate-500 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500 resize-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-400 uppercase mb-3">
-                  Category Adjustments (percentage change)
-                </label>
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {categories.filter(c => c.type === "expense" || c.type === "both").map((cat) => (
-                    <div key={cat.id} className="flex items-center justify-between">
-                      <span className="text-sm text-slate-300">{cat.name}</span>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          value={categoryAdjustments[cat.id] || 0}
-                          onChange={(e) => setCategoryAdjustments({
-                            ...categoryAdjustments,
-                            [cat.id]: parseFloat(e.target.value) || 0
-                          })}
-                          className="w-20 rounded-lg border border-white/10 bg-white/5 py-1.5 px-2 text-sm text-white text-right focus:border-green-500 focus:outline-none"
-                          placeholder="0"
-                        />
-                        <span className="text-sm text-slate-400 w-6">%</span>
-                      </div>
-                    </div>
-                  ))}
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+              {/* Left: Form */}
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 uppercase mb-2">Scenario Name</label>
+                  <input
+                    type="text"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    placeholder="e.g., Reduce Dining Out"
+                    className="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 px-4 text-white placeholder:text-slate-500 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                  />
                 </div>
-                <p className="text-xs text-slate-500 mt-2">
-                  Use negative values to decrease budgets, positive to increase
-                </p>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 uppercase mb-2">Description (optional)</label>
+                  <textarea
+                    value={formData.description || ""}
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                    placeholder="Describe what this scenario explores..."
+                    rows={2}
+                    className="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 px-4 text-white placeholder:text-slate-500 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500 resize-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 uppercase mb-3">
+                    Category Adjustments (percentage change)
+                  </label>
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    {categories.filter(c => c.type === "expense" || c.type === "both").map((cat) => (
+                      <div key={cat.id} className="flex items-center justify-between">
+                        <span className="text-sm text-slate-300">{cat.name}</span>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            value={categoryAdjustments[cat.id] || 0}
+                            onChange={(e) => setCategoryAdjustments({
+                              ...categoryAdjustments,
+                              [cat.id]: parseFloat(e.target.value) || 0
+                            })}
+                            className="w-20 rounded-lg border border-white/10 bg-white/5 py-1.5 px-2 text-sm text-white text-right focus:border-green-500 focus:outline-none"
+                            placeholder="0"
+                          />
+                          <span className="text-sm text-slate-400 w-6">%</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-2">
+                    Use negative values to decrease budgets, positive to increase
+                  </p>
+                </div>
+              </div>
+
+              {/* Right: Impact Preview */}
+              <div>
+                <ImpactPreviewPanel
+                  isSimulating={isSimulating}
+                  beforeMetrics={budget ? {
+                    savingsRate: budget.savings_percentage || 0,
+                    investmentRate: 0,
+                    needsPercent: budget.needs_percentage || 0,
+                    wantsPercent: budget.wants_percentage || 0
+                  } : undefined}
+                  afterMetrics={simulation ? {
+                    newSavingsRate: simulation.newSavingsRate,
+                    newInvestmentRate: simulation.newInvestmentRate,
+                    newNeedsPercent: simulation.newNeedsPercent,
+                    newWantsPercent: simulation.newWantsPercent,
+                    savingsDelta: simulation.savingsDelta,
+                    investmentDelta: simulation.investmentDelta,
+                    needsDelta: simulation.needsDelta,
+                    wantsDelta: simulation.wantsDelta,
+                    estimatedDifference: simulation.estimatedDifference
+                  } : undefined}
+                />
               </div>
             </div>
 

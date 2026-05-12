@@ -16,7 +16,7 @@ class ScenarioBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
     income_change: Optional[Decimal] = Field(None)
-    new_income: Optional[Decimal] = Field(None, gt=0)
+    new_income: Optional[Decimal] = Field(None, ge=0)
     scenario_needs_percentage: Optional[Decimal] = Field(None, ge=0, le=100)
     scenario_wants_percentage: Optional[Decimal] = Field(None, ge=0, le=100)
     scenario_savings_percentage: Optional[Decimal] = Field(None, ge=0, le=100)
@@ -49,7 +49,7 @@ class ScenarioUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
     income_change: Optional[Decimal] = Field(None)
-    new_income: Optional[Decimal] = Field(None, gt=0)
+    new_income: Optional[Decimal] = Field(None, ge=0)
     scenario_needs_percentage: Optional[Decimal] = Field(None, ge=0, le=100)
     scenario_wants_percentage: Optional[Decimal] = Field(None, ge=0, le=100)
     scenario_savings_percentage: Optional[Decimal] = Field(None, ge=0, le=100)

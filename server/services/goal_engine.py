@@ -154,6 +154,11 @@ class GoalEngine:
         Returns:
             Progress percentage (0-100)
         """
+        if not isinstance(current_amount, Decimal):
+            current_amount = Decimal(str(current_amount))
+        if not isinstance(target_amount, Decimal):
+            target_amount = Decimal(str(target_amount))
+
         if target_amount <= 0:
             return Decimal("0")
         

@@ -14,7 +14,8 @@ import {
   Bell,
 } from "lucide-react";
 import { useBudget } from "@/hooks/use-budgets";
-import { api, BudgetReport } from "@/lib/api";
+import { api, BudgetReport, Recommendation } from "@/lib/api";
+import { ImpactPanel } from "@/components/budget/ImpactPanel";
 
 export default function BudgetDetailPage() {
   const params = useParams();
@@ -24,7 +25,9 @@ export default function BudgetDetailPage() {
   const { budget, isLoading, error, deleteBudget, setDefault } =
     useBudget(budgetId);
   const [currentReport, setCurrentReport] = useState<BudgetReport | null>(null);
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [reportLoading, setReportLoading] = useState(false);
+  const [recommendationsLoading, setRecommendationsLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
@@ -42,6 +45,24 @@ export default function BudgetDetailPage() {
       }
     };
     fetchCurrentReport();
+  }, [budgetId]);
+
+  useEffect(() => {
+    const fetchRecommendations = async () => {
+      if (budgetId) {
+        setRecommendationsLoading(true);
+        try {
+          const result = await api.getRecommendations();
+          setRecommendations(result.recommendations || []);
+        } catch (err) {
+          console.error("Failed to fetch recommendations:", err);
+          setRecommendations([]);
+        } finally {
+          setRecommendationsLoading(false);
+        }
+      }
+    };
+    fetchRecommendations();
   }, [budgetId]);
 
   const handleDelete = async () => {
@@ -271,6 +292,17 @@ export default function BudgetDetailPage() {
                 </span>
               </div>
             </div>
+          </div>
+
+          {/* Impact Panel Section */}
+          <div className="mb-8">
+            <ImpactPanel
+              budgetId={budgetId}
+              budget={budget}
+              report={currentReport}
+              recommendations={recommendations}
+              isLoading={reportLoading || recommendationsLoading}
+            />
           </div>
 
           {/* Current Period Report */}

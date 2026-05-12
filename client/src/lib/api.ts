@@ -46,6 +46,7 @@ export interface Transaction {
   type: "income" | "expense";
   category_id: string | null;
   category_name?: string;
+  category_type?: Category["category_type"];
   bank_account_id: string | null;
   bank_account_name?: string;
   notes: string | null;
@@ -323,6 +324,52 @@ export interface UpdateBudgetData {
   start_date?: string;
   end_date?: string;
   is_default?: boolean;
+}
+
+export interface AnalysisCategoryItem {
+  amount: number;
+  percentage: number;
+  icon?: string | null;
+  color?: string | null;
+  transaction_count: number;
+}
+
+export interface BudgetAnalysisBreakdown {
+  Needs: Record<string, AnalysisCategoryItem>;
+  Wants: Record<string, AnalysisCategoryItem>;
+  Savings: Record<string, AnalysisCategoryItem>;
+}
+
+export interface BudgetAnalysisResponse {
+  analysis_id: string;
+  budget_name: string;
+  analysis_start_date: string;
+  analysis_end_date: string;
+  total_spending: number;
+  needs_total: number;
+  wants_total: number;
+  savings_total: number;
+  needs_percentage: number;
+  wants_percentage: number;
+  savings_percentage: number;
+  category_breakdown: BudgetAnalysisBreakdown;
+  total_transactions: number;
+  data_quality: string;
+  validation_warnings: string[];
+}
+
+export interface BudgetAnalyzeRequest {
+  name: string;
+  budget_start_date: string;
+  income?: number;
+}
+
+export interface CreateBudgetWithAnalysisRequest {
+  name: string;
+  budget_start_date: string;
+  analysis_id: string;
+  income?: number;
+  confirmed: boolean;
 }
 
 // Budget Generation Types
@@ -1207,6 +1254,54 @@ export const api = {
       body: JSON.stringify(backendData),
     });
     return transformBackendBudget(budget);
+  },
+
+  async analyzeBudget(data: BudgetAnalyzeRequest): Promise<BudgetAnalysisResponse> {
+    const analysis = await fetchWithAuth<any>("/api/budgets/analyze", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+
+    return {
+      ...analysis,
+      total_spending: parseNumber(analysis.total_spending),
+      needs_total: parseNumber(analysis.needs_total),
+      wants_total: parseNumber(analysis.wants_total),
+      savings_total: parseNumber(analysis.savings_total),
+      needs_percentage: parseNumber(analysis.needs_percentage),
+      wants_percentage: parseNumber(analysis.wants_percentage),
+      savings_percentage: parseNumber(analysis.savings_percentage),
+    } as BudgetAnalysisResponse;
+  },
+
+  async createBudgetWithAnalysis(
+    data: CreateBudgetWithAnalysisRequest,
+  ): Promise<Budget> {
+    const budget = await fetchWithAuth<any>("/api/budgets", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return transformBackendBudget(budget);
+  },
+
+  async getBudgetHistoryAnalysis(
+    budgetId: string,
+  ): Promise<BudgetAnalysisResponse> {
+    const analysis = await fetchWithAuth<any>(
+      `/api/budgets/${budgetId}/history-analysis`,
+    );
+    return {
+      ...analysis,
+      analysis_id: analysis.analysis_id ?? "",
+      budget_name: analysis.budget_name ?? "",
+      total_spending: parseNumber(analysis.total_spending),
+      needs_total: parseNumber(analysis.needs_total),
+      wants_total: parseNumber(analysis.wants_total),
+      savings_total: parseNumber(analysis.savings_total),
+      needs_percentage: parseNumber(analysis.needs_percentage),
+      wants_percentage: parseNumber(analysis.wants_percentage),
+      savings_percentage: parseNumber(analysis.savings_percentage),
+    } as BudgetAnalysisResponse;
   },
 
   async updateBudget(id: string, data: UpdateBudgetData): Promise<Budget> {

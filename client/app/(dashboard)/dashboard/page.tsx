@@ -206,8 +206,8 @@ export default function DashboardPage() {
                         {card.change}
                       </div>
                     </div>
-                    <p className="text-sm text-slate-400">{card.title}</p>
-                    <p className="text-2xl font-bold mt-1">{card.value}</p>
+                    <p className="text-xs uppercase text-slate-400 tracking-wide">{card.title}</p>
+                    <p className="text-3xl font-bold mt-2 text-white">{card.value}</p>
                   </div>
                 ))}
               </div>
@@ -234,14 +234,14 @@ export default function DashboardPage() {
 
                   <div className="space-y-4">
                     {budgetBreakdown.map((item, index) => (
-                      <div key={index} className="flex items-center justify-between">
+                      <div key={index} className="flex items-center justify-between p-2 rounded-lg hover:bg-white/5">
                         <div className="flex items-center gap-3">
                           <div className={`h-3 w-3 rounded-full ${item.color}`} />
-                          <span className="text-sm text-slate-300">{item.category}</span>
+                          <span className="text-sm font-medium text-white">{item.category}</span>
                         </div>
                         <div className="text-right">
-                          <p className="text-sm font-medium">{formatAmount(item.amount)}</p>
-                          <p className="text-xs text-slate-500">{item.percentage}% / {item.target}%</p>
+                          <p className="text-sm font-semibold text-white">{formatAmount(item.amount)}</p>
+                          <p className="text-xs text-slate-400">{item.percentage}% / {item.target}%</p>
                         </div>
                       </div>
                     ))}
@@ -255,13 +255,13 @@ export default function DashboardPage() {
                     <PieChart className="h-5 w-5 text-slate-400" />
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     {currentReport ? (
                       <>
                         <div>
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-sm text-slate-300">Needs</span>
-                            <span className="text-sm font-medium">{formatAmount(currentReport.total_needs ?? 0)}</span>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm font-medium text-white">Needs</span>
+                            <span className="text-sm font-semibold text-white">{formatAmount(currentReport.total_needs ?? 0)}</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <div className="flex-1 h-2 rounded-full bg-slate-700">
@@ -271,9 +271,9 @@ export default function DashboardPage() {
                           </div>
                         </div>
                         <div>
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-sm text-slate-300">Wants</span>
-                            <span className="text-sm font-medium">{formatAmount(currentReport.total_wants ?? 0)}</span>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm font-medium text-white">Wants</span>
+                            <span className="text-sm font-semibold text-white">{formatAmount(currentReport.total_wants ?? 0)}</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <div className="flex-1 h-2 rounded-full bg-slate-700">
@@ -293,15 +293,15 @@ export default function DashboardPage() {
                           { category: "Shopping", amount: 8400, percentage: 16, color: "bg-pink-500" }
                         ].map((item, index) => (
                           <div key={index}>
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="text-sm text-slate-300">{item.category}</span>
-                              <span className="text-sm font-medium">{formatAmount(item.amount)}</span>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-sm font-medium text-white">{item.category}</span>
+                              <span className="text-sm font-semibold text-white">{formatAmount(item.amount)}</span>
                             </div>
                             <div className="flex items-center gap-2">
-                              <div className="flex-1 h-2 rounded-full bg-slate-700">
+                              <div className="flex-1 h-2.5 rounded-full bg-slate-700">
                                 <div className={`h-full rounded-full ${item.color}`} style={{ width: `${item.percentage}%` }} />
                               </div>
-                              <span className="text-xs text-slate-500">{item.percentage}%</span>
+                              <span className="text-xs font-medium text-slate-400 w-8 text-right">{item.percentage}%</span>
                             </div>
                           </div>
                         ))}
@@ -325,26 +325,26 @@ export default function DashboardPage() {
                         <Link 
                           key={goal.id} 
                           href={`/goals/${goal.id}`}
-                          className="block p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
+                          className="block p-4 rounded-xl bg-white/5 hover:bg-white/10 transition-colors cursor-pointer border border-white/5 hover:border-white/10"
                         >
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-sm font-medium">{goal.name}</span>
-                            <span className="text-xs text-slate-400">{goal.deadline}</span>
+                          <div className="flex items-center justify-between mb-3">
+                            <span className="text-sm font-semibold text-white">{goal.name}</span>
+                            <span className="text-xs font-medium text-slate-400">{goal.deadline}</span>
                           </div>
-                          <div className="flex items-center justify-between text-xs mb-2">
-                            <span className="text-slate-400">{formatAmount(goal.current)}</span>
-                            <span className="text-slate-400">{formatAmount(goal.target)}</span>
+                          <div className="flex items-center justify-between text-xs mb-3 text-slate-300">
+                            <span className="font-medium">{formatAmount(goal.current)}</span>
+                            <span className="font-medium">{formatAmount(goal.target)}</span>
                           </div>
                           <div className="h-2 rounded-full bg-slate-700">
                             <div className="h-full rounded-full bg-gradient-to-r from-green-500 to-emerald-400" style={{ width: `${Math.min(goal.progress, 100)}%` }} />
                           </div>
-                          <p className="text-xs text-green-400 mt-1.5">{goal.progress.toFixed(0)}% complete</p>
+                          <p className="text-xs font-semibold text-green-400 mt-2">{goal.progress.toFixed(0)}% complete</p>
                         </Link>
                       ))
                     ) : (
-                      <div className="text-center py-8 text-slate-400">
-                        <p className="mb-2">No goals yet.</p>
-                        <Link href="/goals/create" className="text-green-400 hover:text-green-300 inline-block">
+                      <div className="text-center py-8">
+                        <p className="mb-3 text-slate-400 text-sm">No goals yet.</p>
+                        <Link href="/goals/create" className="text-green-400 hover:text-green-300 inline-block font-medium">
                           Create your first goal
                         </Link>
                       </div>
@@ -369,10 +369,10 @@ export default function DashboardPage() {
                       recentTransactions.map((txn) => (
                         <div 
                           key={txn.id}
-                          className="flex items-center justify-between p-3 rounded-xl hover:bg-white/5 transition-colors cursor-pointer"
+                          className="flex items-center justify-between p-3 rounded-xl hover:bg-white/5 transition-colors cursor-pointer border border-white/5 hover:border-white/10"
                         >
-                          <div className="flex items-center gap-3">
-                            <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${
+                          <div className="flex items-center gap-3 flex-1">
+                            <div className={`flex h-10 w-10 items-center justify-center rounded-xl flex-shrink-0 ${
                               txn.type === "income" ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"
                             }`}>
                               {txn.type === "income" ? (
@@ -381,8 +381,8 @@ export default function DashboardPage() {
                                 <ArrowUpRight className="h-5 w-5" />
                               )}
                             </div>
-                            <div>
-                              <p className="text-sm font-medium">{txn.name}</p>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-white truncate">{txn.name}</p>
                               <p className="text-xs text-slate-400">{txn.category} • {txn.date}</p>
                             </div>
                           </div>
@@ -394,9 +394,9 @@ export default function DashboardPage() {
                         </div>
                       ))
                     ) : (
-                      <div className="text-center py-8 text-slate-400">
-                        <p>No transactions yet.</p>
-                        <Link href="/transactions/upload" className="text-green-400 hover:text-green-300 mt-2 inline-block">
+                      <div className="text-center py-8">
+                        <p className="text-slate-400 text-sm mb-3">No transactions yet.</p>
+                        <Link href="/transactions/upload" className="text-green-400 hover:text-green-300 inline-block font-medium">
                           Upload a statement to get started
                         </Link>
                       </div>
@@ -429,7 +429,7 @@ export default function DashboardPage() {
                               style={{ height: `${expenseHeight}%` }}
                             />
                           </div>
-                          <span className="text-xs text-slate-500">{item.month}</span>
+                          <span className="text-xs font-medium text-slate-400">{item.month}</span>
                         </div>
                       )
                     })}
@@ -438,11 +438,11 @@ export default function DashboardPage() {
                   <div className="flex items-center justify-center gap-6 mt-4 pt-4 border-t border-white/10">
                     <div className="flex items-center gap-2">
                       <div className="h-3 w-3 rounded-full bg-green-500" />
-                      <span className="text-xs text-slate-400">Income</span>
+                      <span className="text-xs font-medium text-slate-300">Income</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="h-3 w-3 rounded-full bg-purple-500" />
-                      <span className="text-xs text-slate-400">Expenses</span>
+                      <span className="text-xs font-medium text-slate-300">Expenses</span>
                     </div>
                   </div>
                 </div>
@@ -456,18 +456,18 @@ export default function DashboardPage() {
                       <Activity className="h-6 w-6 text-green-400" />
                     </div>
                     <div className="flex-1">
-                      <h3 className="text-lg font-semibold mb-1">Top Recommendation</h3>
-                      <p className="text-slate-300 mb-3">
+                      <h3 className="text-lg font-semibold mb-2 text-white">Top Recommendation</h3>
+                      <p className="text-slate-200 mb-3 text-sm leading-relaxed">
                         {recommendations[0].description}
                       </p>
                       {recommendations[0].potential_savings && (
-                        <p className="text-sm text-green-400 mb-3">
+                        <p className="text-sm font-semibold text-green-400 mb-3">
                           Potential savings: ₹{recommendations[0].potential_savings.toLocaleString()}
                         </p>
                       )}
                       <Link 
                         href="/recommendations" 
-                        className="text-sm text-green-400 hover:text-green-300 underline"
+                        className="text-sm font-medium text-green-400 hover:text-green-300 inline-block"
                       >
                         View all recommendations →
                       </Link>
@@ -481,8 +481,8 @@ export default function DashboardPage() {
                       <Activity className="h-6 w-6 text-green-400" />
                     </div>
                     <div>
-                      <h3 className="text-lg font-semibold mb-1">Quick Insight</h3>
-                      <p className="text-slate-300">
+                      <h3 className="text-lg font-semibold mb-2 text-white">Quick Insight</h3>
+                      <p className="text-slate-200 text-sm leading-relaxed">
                         Your savings rate is <span className="text-green-400 font-semibold">{savingsRate.toFixed(1)}%</span> — 
                         above the recommended 20%! You could reach your emergency fund goal 2 months earlier 
                         by increasing investments to 25% of income.

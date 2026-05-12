@@ -26,11 +26,20 @@ export function useRecommendations(params?: { category?: string; status?: string
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const paramsCategory = params?.category
+  const paramsStatus = params?.status
+  const paramsLimit = params?.limit
+
   const fetchRecommendations = useCallback(async (fetchParams?: { category?: string; status?: string; limit?: number }) => {
     setIsLoading(true)
     setError(null)
     try {
-      const data = await api.getRecommendations(fetchParams || params)
+      const resolvedParams = fetchParams ?? (
+        paramsCategory !== undefined || paramsStatus !== undefined || paramsLimit !== undefined
+          ? { category: paramsCategory, status: paramsStatus, limit: paramsLimit }
+          : undefined
+      )
+      const data = await api.getRecommendations(resolvedParams)
       setRecommendations(data.recommendations)
     } catch (err) {
       if (err instanceof ApiError) {
@@ -41,7 +50,7 @@ export function useRecommendations(params?: { category?: string; status?: string
     } finally {
       setIsLoading(false)
     }
-  }, [params])
+  }, [paramsCategory, paramsStatus, paramsLimit])
 
   useEffect(() => {
     fetchRecommendations()
