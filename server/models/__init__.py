@@ -10,6 +10,7 @@ from .budget import Budget, BudgetType, BudgetPeriod
 from .budget_history_analysis import BudgetHistoryAnalysis
 from .budget_report import BudgetReport
 from .budget_category_breakdown import BudgetCategoryBreakdown
+from .budget_category import BudgetCategory
 from .budget_scenario import BudgetScenario
 
 # Goal Models
@@ -52,6 +53,7 @@ __all__ = [
     "BudgetHistoryAnalysis",
     "BudgetReport",
     "BudgetCategoryBreakdown",
+    "BudgetCategory",
     "BudgetScenario",
     
     # Goal Models

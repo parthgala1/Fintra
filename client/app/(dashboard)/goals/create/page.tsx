@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { unstable_noStore as noStore } from "next/cache"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { 
@@ -12,6 +13,7 @@ import { useGoals } from "@/hooks/use-goals"
 import { GoalCreate } from "@/lib/api"
 
 export default function CreateGoalPage() {
+  noStore()
   const router = useRouter()
   const { createGoal } = useGoals()
 

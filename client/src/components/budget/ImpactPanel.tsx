@@ -2,7 +2,7 @@
 
 import { Budget, BudgetReport, Recommendation } from "@/lib/api"
 import { formatINR } from "@/lib/utils"
-import { AlertTriangle, TrendingUp, Zap, CheckCircle } from "lucide-react"
+import { AlertTriangle, TrendingUp, Zap, CheckCircle, RefreshCw } from "lucide-react"
 
 interface ImpactPanelProps {
   budgetId: string
@@ -10,6 +10,8 @@ interface ImpactPanelProps {
   report?: BudgetReport | null
   recommendations?: Recommendation[]
   isLoading?: boolean
+  onGenerateRecommendations?: () => Promise<void>
+  isGenerating?: boolean
 }
 
 export function ImpactPanel({
@@ -18,6 +20,8 @@ export function ImpactPanel({
   report,
   recommendations = [],
   isLoading = false,
+  onGenerateRecommendations,
+  isGenerating = false,
 }: ImpactPanelProps) {
   if (isLoading) {
     return (
@@ -112,7 +116,17 @@ export function ImpactPanel({
         <div className="rounded-2xl border border-green-500/20 bg-green-500/5 p-6 text-center backdrop-blur-sm">
           <CheckCircle className="mx-auto mb-3 h-8 w-8 text-green-400" />
           <p className="text-green-400 font-semibold">Your budget is on track!</p>
-          <p className="text-sm text-green-400/70">Keep maintaining these spending habits.</p>
+          <p className="text-sm text-green-400/70 mb-4">Keep maintaining these spending habits.</p>
+          {onGenerateRecommendations && (
+            <button
+              onClick={onGenerateRecommendations}
+              disabled={isGenerating}
+              className="inline-flex items-center gap-2 rounded-xl border border-green-500/30 bg-green-500/10 px-4 py-2 text-sm font-medium text-green-300 transition hover:bg-green-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <RefreshCw className={`h-4 w-4 ${isGenerating ? "animate-spin" : ""}`} />
+              {isGenerating ? "Generating..." : "Generate Personalised Recommendations"}
+            </button>
+          )}
         </div>
       )}
     </div>

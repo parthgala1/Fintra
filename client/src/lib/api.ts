@@ -61,6 +61,7 @@ export interface TransactionParams {
   search?: string;
   bank_account_id?: string;
   category_id?: string;
+  category_type?: string;
   start_date?: string;
   end_date?: string;
   type?: "income" | "expense";
@@ -430,6 +431,8 @@ export interface BudgetReport {
   wants_percentage_used?: number;
   savings_percentage_used?: number;
   overall_deviation?: number;
+  remaining_budget?: number;
+  last_calculated_at?: string;
   is_over_budget?: boolean;
   // Legacy field names for compatibility
   start_date?: string;
@@ -450,6 +453,23 @@ export interface GenerateBudgetReportData {
   period_type?: "weekly" | "biweekly" | "monthly" | "yearly";
   period_start?: string;
   period_end?: string;
+}
+
+export interface BudgetCategoryAllocation {
+  id: string;
+  budget_id: string;
+  category_id: string;
+  category_type: "needs" | "wants" | "savings";
+  budgeted_amount: number;
+  sort_order: number;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface BudgetCategoryAllocationInput {
+  category_id: string;
+  budgeted_amount: number;
+  sort_order?: number;
 }
 
 // Scenario Types
@@ -894,23 +914,41 @@ function normalizeBudgetReport(report: any): BudgetReport {
    *
    * This prevents NaN errors when doing calculations or displaying amounts.
    */
+  const totalBudgeted = parseNumber(report.total_budgeted);
+  const totalSpent = parseNumber(report.total_spent);
+  const overallDeviation =
+    totalBudgeted > 0 ? ((totalSpent - totalBudgeted) / totalBudgeted) * 100 : 0;
+
   return {
     ...report,
     total_income: parseNumber(report.total_income),
     budgeted_needs: parseNumber(report.budgeted_needs),
     budgeted_wants: parseNumber(report.budgeted_wants),
     budgeted_savings: parseNumber(report.budgeted_savings),
-    total_budgeted: parseNumber(report.total_budgeted),
+    total_budgeted: totalBudgeted,
     actual_needs: parseNumber(report.actual_needs),
     actual_wants: parseNumber(report.actual_wants),
     actual_savings: parseNumber(report.actual_savings),
-    total_spent: parseNumber(report.total_spent),
+    total_spent: totalSpent,
     needs_deviation: parseNumber(report.needs_deviation),
     wants_deviation: parseNumber(report.wants_deviation),
     savings_deviation: parseNumber(report.savings_deviation),
     needs_percentage_used: parseNumber(report.needs_percentage_used),
     wants_percentage_used: parseNumber(report.wants_percentage_used),
     savings_percentage_used: parseNumber(report.savings_percentage_used),
+    remaining_budget: parseNumber(report.remaining_budget),
+    last_calculated_at: report.last_calculated_at || null,
+    overall_deviation: parseNumber(report.overall_deviation) || overallDeviation,
+    category_breakdown:
+      report.breakdowns?.map((b: any) => ({
+        category_id: b.category_id,
+        category_name: b.category_name,
+        budgeted: parseNumber(b.budgeted_amount),
+        spent: parseNumber(b.actual_amount),
+        deviation: parseNumber(b.deviation_percentage),
+      })) ||
+      report.category_breakdown ||
+      [],
     breakdowns:
       report.breakdowns?.map((b: any) => ({
         ...b,
@@ -947,6 +985,16 @@ function normalizeScenario(scenario: any): Scenario {
     needs_impact: parseNumber(scenario.needs_impact),
     wants_impact: parseNumber(scenario.wants_impact),
     savings_impact: parseNumber(scenario.savings_impact),
+  };
+}
+
+// Helper function to normalize category mapping data between backend and frontend field names
+function normalizeCategoryMapping(mapping: any): CategoryMapping {
+  return {
+    ...mapping,
+    // Backend returns `name`; frontend uses `keyword`
+    keyword: mapping.keyword ?? mapping.name ?? mapping.contains_text ?? "",
+    priority: parseNumber(mapping.priority),
   };
 }
 
@@ -1147,26 +1195,49 @@ export const api = {
 
   // Category Mapping APIs
   async getCategoryMappings(): Promise<CategoryMappingListResponse> {
-    return fetchWithAuth<CategoryMappingListResponse>("/api/category-mappings");
+    const response = await fetchWithAuth<CategoryMappingListResponse>(
+      "/api/category-mappings",
+    );
+    return {
+      ...response,
+      mappings: (response.mappings || []).map(normalizeCategoryMapping),
+    };
   },
 
   async createCategoryMapping(
     data: CreateCategoryMappingData,
   ): Promise<CategoryMapping> {
-    return fetchWithAuth<CategoryMapping>("/api/category-mappings", {
+    const backendData = {
+      name: data.keyword,
+      contains_text: data.keyword,
+      category_id: data.category_id,
+      priority: data.priority ?? 1,
+    };
+    const mapping = await fetchWithAuth<CategoryMapping>("/api/category-mappings", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: JSON.stringify(backendData),
     });
+    return normalizeCategoryMapping(mapping);
   },
 
   async updateCategoryMapping(
     id: string,
     data: UpdateCategoryMappingData,
   ): Promise<CategoryMapping> {
-    return fetchWithAuth<CategoryMapping>(`/api/category-mappings/${id}`, {
+    const backendData: Record<string, unknown> = {
+      ...data,
+    };
+    if (data.keyword !== undefined) {
+      backendData.name = data.keyword;
+      backendData.contains_text = data.keyword;
+      delete backendData.keyword;
+    }
+
+    const mapping = await fetchWithAuth<CategoryMapping>(`/api/category-mappings/${id}`, {
       method: "PATCH",
-      body: JSON.stringify(data),
+      body: JSON.stringify(backendData),
     });
+    return normalizeCategoryMapping(mapping);
   },
 
   async deleteCategoryMapping(id: string): Promise<{ message: string }> {
@@ -1406,15 +1477,66 @@ export const api = {
     return normalizeBudgetReport(report);
   },
 
-  async getCurrentReport(budgetId: string): Promise<BudgetReport | null> {
+  async getCurrentReport(
+    budgetId: string,
+    recalculate: boolean = false,
+  ): Promise<BudgetReport | null> {
     try {
+      const params = new URLSearchParams();
+      if (recalculate) params.set("recalculate", "true");
+      const url = `/api/budgets/${budgetId}/reports/current${params.toString() ? `?${params.toString()}` : ""}`;
       const report = await fetchWithAuth<BudgetReport>(
-        `/api/budgets/${budgetId}/reports/current`,
+        url,
       );
       return normalizeBudgetReport(report);
     } catch {
       return null;
     }
+  },
+
+  async recalculateCurrentReport(budgetId: string): Promise<BudgetReport> {
+    const report = await fetchWithAuth<BudgetReport>(
+      `/api/budgets/${budgetId}/reports/recalculate`,
+      {
+        method: "POST",
+      },
+    );
+    return normalizeBudgetReport(report);
+  },
+
+  async getBudgetCategories(budgetId: string): Promise<BudgetCategoryAllocation[]> {
+    const response = await fetchWithAuth<{ allocations: BudgetCategoryAllocation[]; total: number }>(
+      `/api/budgets/${budgetId}/categories`,
+    );
+    return (response.allocations || []).map((a) => ({
+      ...a,
+      budgeted_amount: parseNumber(a.budgeted_amount),
+      sort_order: parseNumber(a.sort_order),
+    }));
+  },
+
+  async updateBudgetCategories(
+    budgetId: string,
+    allocations: BudgetCategoryAllocationInput[],
+  ): Promise<BudgetCategoryAllocation[]> {
+    const response = await fetchWithAuth<{ allocations: BudgetCategoryAllocation[]; total: number }>(
+      `/api/budgets/${budgetId}/categories`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          allocations: allocations.map((a, index) => ({
+            category_id: a.category_id,
+            budgeted_amount: a.budgeted_amount,
+            sort_order: a.sort_order ?? index,
+          })),
+        }),
+      },
+    );
+    return (response.allocations || []).map((a) => ({
+      ...a,
+      budgeted_amount: parseNumber(a.budgeted_amount),
+      sort_order: parseNumber(a.sort_order),
+    }));
   },
 
   async getLatestReport(budgetId: string): Promise<BudgetReport | null> {
@@ -1431,7 +1553,9 @@ export const api = {
   // Scenario APIs
   async getScenarios(budgetId?: string): Promise<Scenario[]> {
     const query = budgetId ? `?budget_id=${budgetId}` : "";
-    const scenarios = await fetchWithAuth<Scenario[]>(`/api/scenarios${query}`);
+    const response = await fetchWithAuth<{ scenarios: Scenario[]; total: number } | Scenario[]>(`/api/scenarios${query}`);
+    // Backend returns { scenarios: [...], total: N }
+    const scenarios = Array.isArray(response) ? response : (response as any).scenarios ?? [];
     return scenarios.map(normalizeScenario);
   },
 
@@ -1446,6 +1570,7 @@ export const api = {
   ): Promise<Scenario> {
     // Transform frontend data to backend schema
     const backendData = {
+      budget_id: budgetId,
       name: data.name,
       description: data.description || null,
       income_change: data.income_change || null,
@@ -1455,7 +1580,7 @@ export const api = {
       scenario_savings_percentage: data.savings_percentage || null,
     };
     const scenario = await fetchWithAuth<Scenario>(
-      `/api/scenarios?budget_id=${budgetId}`,
+      `/api/scenarios`,
       {
         method: "POST",
         body: JSON.stringify(backendData),

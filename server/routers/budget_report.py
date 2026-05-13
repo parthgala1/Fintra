@@ -27,7 +27,7 @@ from schemas.budget_report import (
     BreakdownResponse,
     ReportGenerate,
 )
-from services.report_generator import ReportGenerator
+from services.budget_report_recalculation_service import BudgetReportRecalculationService
 
 logger = logging.getLogger(__name__)
 
@@ -147,10 +147,9 @@ def generate_report(
         Created budget report with breakdowns
     """
     # Verify budget exists
-    budget = get_budget_or_404(budget_id, current_user.id, db)
-    
-    # Generate report
-    report = ReportGenerator.generate_report(
+    get_budget_or_404(budget_id, current_user.id, db)
+
+    report = BudgetReportRecalculationService.recalculate(
         db=db,
         user_id=current_user.id,
         budget_id=budget_id,
@@ -176,6 +175,7 @@ def generate_report(
 @router.get("/current", response_model=BudgetReportWithBreakdowns)
 def get_current_report(
     budget_id: UUID,
+    recalculate: bool = Query(False),
     current_user: User = Depends(get_current_user_dep),
     db: Session = Depends(get_db),
 ):
@@ -204,10 +204,11 @@ def get_current_report(
             BudgetReport.period_start >= period_start,
             BudgetReport.period_start <= period_end,
         )
+        .order_by(BudgetReport.created_at.desc())
         .first()
     )
     
-    if existing_report:
+    if existing_report and not recalculate:
         # Get breakdowns
         breakdowns = (
             db.query(BudgetCategoryBreakdown)
@@ -219,9 +220,8 @@ def get_current_report(
             **BudgetReportResponse.model_validate(existing_report).model_dump(),
             breakdowns=[BreakdownResponse.model_validate(b) for b in breakdowns],
         )
-    
-    # Generate new report
-    report = ReportGenerator.generate_report(
+
+    report = BudgetReportRecalculationService.recalculate(
         db=db,
         user_id=current_user.id,
         budget_id=budget_id,
@@ -236,6 +236,35 @@ def get_current_report(
         .all()
     )
     
+    return BudgetReportWithBreakdowns(
+        **BudgetReportResponse.model_validate(report).model_dump(),
+        breakdowns=[BreakdownResponse.model_validate(b) for b in breakdowns],
+    )
+
+
+@router.post("/recalculate", response_model=BudgetReportWithBreakdowns)
+def recalculate_current_report(
+    budget_id: UUID,
+    current_user: User = Depends(get_current_user_dep),
+    db: Session = Depends(get_db),
+):
+    budget = get_budget_or_404(budget_id, current_user.id, db)
+    period_start, period_end = get_current_period_dates(budget.period)
+
+    report = BudgetReportRecalculationService.recalculate(
+        db=db,
+        user_id=current_user.id,
+        budget_id=budget_id,
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+    breakdowns = (
+        db.query(BudgetCategoryBreakdown)
+        .filter(BudgetCategoryBreakdown.budget_report_id == report.id)
+        .all()
+    )
+
     return BudgetReportWithBreakdowns(
         **BudgetReportResponse.model_validate(report).model_dump(),
         breakdowns=[BreakdownResponse.model_validate(b) for b in breakdowns],

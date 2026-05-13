@@ -76,19 +76,9 @@ export default function DashboardLayout({ children }: SidebarProps) {
 
   return (
     <div className="min-h-screen bg-[#020617]">
-      {/* Mobile menu button */}
-      <div className="lg:hidden fixed top-4 left-4 z-50">
-        <button
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          className="p-2 rounded-lg bg-[#0F172A] border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
-        >
-          {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-        </button>
-      </div>
-
-      {/* Sidebar */}
+      {/* Sidebar only, no navbar */}
       <aside className={`fixed top-0 left-0 h-full w-64 bg-[#0F172A] border-r border-white/10 z-40 transform transition-transform duration-300 lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        {/* Logo */}
+        {/* Sidebar content */}
         <div className="h-16 flex items-center px-6 border-b border-white/10">
           <Link href="/dashboard" className="flex items-center gap-3" onClick={() => setSidebarOpen(false)}>
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#22C55E]">
@@ -97,13 +87,11 @@ export default function DashboardLayout({ children }: SidebarProps) {
             <span className="text-xl font-semibold text-white tracking-tight">Fintra</span>
           </Link>
         </div>
-
-        {/* Navigation */}
         <nav className="flex-1 py-6 px-3 overflow-y-auto">
           <div className="space-y-1">
             {navItems.map((item) => {
-              const isActive = pathname === item.href || pathname.startsWith(item.href + "/")
-              const Icon = item.icon
+              const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+              const Icon = item.icon;
               return (
                 <Link
                   key={item.href}
@@ -118,35 +106,11 @@ export default function DashboardLayout({ children }: SidebarProps) {
                   <Icon className={`h-5 w-5 ${isActive ? 'text-[#22C55E]' : ''}`} />
                   {item.label}
                 </Link>
-              )
+              );
             })}
           </div>
         </nav>
-
-        {/* User section at bottom */}
         <div className="absolute bottom-0 left-0 right-0 border-t border-white/10 p-4">
-          {/* Settings */}
-          <Link
-            href="/settings"
-            onClick={() => setSidebarOpen(false)}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-white hover:bg-white/5 transition-all cursor-pointer mb-3"
-          >
-            <Settings className="h-5 w-5" />
-            Settings
-          </Link>
-
-          {/* User info */}
-          <div className="flex items-center gap-3 px-3 py-2">
-            <div className="h-9 w-9 rounded-full bg-[#1E293B] flex items-center justify-center text-sm font-medium text-slate-300">
-              {user?.name?.charAt(0).toUpperCase() || "U"}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-white truncate">{user?.name || "User"}</p>
-              <p className="text-xs text-slate-500 truncate">{user?.email || ""}</p>
-            </div>
-          </div>
-
-          {/* Logout button */}
           <button
             onClick={handleLogout}
             disabled={authLoading}
@@ -162,14 +126,6 @@ export default function DashboardLayout({ children }: SidebarProps) {
         </div>
       </aside>
 
-      {/* Overlay for mobile */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 z-30 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
       {/* Main content */}
       <main className="lg:ml-64 min-h-screen">
         <div className="pt-16 lg:pt-0">
@@ -177,5 +133,5 @@ export default function DashboardLayout({ children }: SidebarProps) {
         </div>
       </main>
     </div>
-  )
+  );
 }

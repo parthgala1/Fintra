@@ -132,59 +132,8 @@ export default function BudgetAlertsPage() {
   return (
     <div className="min-h-screen bg-[#020617]">
       {/* Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-[#020617]/90 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-2">
-            <Link href="/dashboard" className="flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-green-500">
-                <TrendingUp className="h-5 w-5 text-[#020617]" />
-              </div>
-              <span className="text-xl font-semibold tracking-tight">
-                Fintra
-              </span>
-            </Link>
-          </div>
 
-          <nav className="hidden items-center gap-6 md:flex">
-            <Link
-              href="/dashboard"
-              className="text-sm font-medium text-slate-400 hover:text-white transition-colors"
-            >
-              Dashboard
-            </Link>
-            <Link
-              href="/budgets"
-              className="text-sm font-medium text-green-400"
-            >
-              Budget
-            </Link>
-          </nav>
-
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handleCheckAlerts}
-              disabled={isCheckingAlerts}
-              className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white hover:bg-white/10 transition-colors disabled:opacity-50 cursor-pointer"
-            >
-              {isCheckingAlerts ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4" />
-              )}
-              Check Now
-            </button>
-            <button
-              onClick={() => setShowConfigModal(true)}
-              className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white hover:bg-white/10 transition-colors cursor-pointer"
-            >
-              <Settings className="h-4 w-4" />
-              Settings
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="pt-24 pb-12">
+      <main className="p-0 pb-12">
         <div className="mx-auto max-w-4xl px-6">
           {/* Page Header */}
           <div className="mb-8">

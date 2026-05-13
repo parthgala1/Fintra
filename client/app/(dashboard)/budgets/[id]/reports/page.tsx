@@ -126,6 +126,18 @@ export default function BudgetReportsPage({ params }: BudgetReportsPageProps) {
     return formatINR(amount, 2);
   };
 
+  const formatDateTime = (dateString?: string) => {
+    if (!dateString) return "N/A";
+    const date = new Date(dateString);
+    return date.toLocaleString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
   const getDeviationColor = (deviation: number) => {
     if (deviation < 0) return "text-green-400";
     if (deviation > 10) return "text-red-400";
@@ -149,52 +161,8 @@ export default function BudgetReportsPage({ params }: BudgetReportsPageProps) {
   return (
     <div className="min-h-screen bg-[#020617]">
       {/* Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-[#020617]/90 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-2">
-            <Link href="/dashboard" className="flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-green-500">
-                <TrendingUp className="h-5 w-5 text-[#020617]" />
-              </div>
-              <span className="text-xl font-semibold tracking-tight">
-                Fintra
-              </span>
-            </Link>
-          </div>
 
-          <nav className="hidden items-center gap-6 md:flex">
-            <Link
-              href="/dashboard"
-              className="text-sm font-medium text-slate-400 hover:text-white transition-colors"
-            >
-              Dashboard
-            </Link>
-            <Link
-              href="/budgets"
-              className="text-sm font-medium text-green-400"
-            >
-              Budget
-            </Link>
-          </nav>
-
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handleGenerateReport}
-              disabled={isGenerating}
-              className="flex items-center gap-2 rounded-xl bg-green-500 px-4 py-2 text-sm font-semibold text-[#020617] transition-all hover:bg-green-400 disabled:opacity-50 cursor-pointer"
-            >
-              {isGenerating ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Plus className="h-4 w-4" />
-              )}
-              Generate Report
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="pt-24 pb-12">
+      <main className="p-6 pb-12">
         <div className="mx-auto max-w-7xl px-6">
           {/* Back Link */}
           <Link
@@ -243,9 +211,7 @@ export default function BudgetReportsPage({ params }: BudgetReportsPageProps) {
                 <div>
                   <p className="text-sm text-slate-400">Remaining</p>
                   <p className="text-xl font-bold text-green-400 mt-1">
-                    {formatAmount(
-                      currentReport.total_budgeted - currentReport.total_spent,
-                    )}
+                    {formatAmount(currentReport.remaining_budget ?? (currentReport.total_budgeted - currentReport.total_spent))}
                   </p>
                 </div>
                 <div>
@@ -258,6 +224,39 @@ export default function BudgetReportsPage({ params }: BudgetReportsPageProps) {
                   </p>
                 </div>
               </div>
+
+              <p className="mt-4 text-xs text-slate-500">
+                Last calculated: {formatDateTime(currentReport.last_calculated_at)}
+              </p>
+
+              {currentReport.category_breakdown &&
+                currentReport.category_breakdown.length > 0 && (
+                  <div className="mt-6 border-t border-white/10 pt-4">
+                    <p className="text-xs font-medium text-slate-400 uppercase mb-3">
+                      Current Period Category Breakdown
+                    </p>
+                    <div className="space-y-2">
+                      {currentReport.category_breakdown.map((cat) => (
+                        <div
+                          key={cat.category_id}
+                          className="flex items-center justify-between text-sm"
+                        >
+                          <span className="text-slate-300">{cat.category_name}</span>
+                          <div className="flex items-center gap-4">
+                            <span className="text-slate-400">
+                              {formatAmount(cat.spent)} / {formatAmount(cat.budgeted)}
+                            </span>
+                            <span
+                              className={`font-medium ${getDeviationColor(cat.deviation ?? 0)}`}
+                            >
+                              {(cat.deviation ?? 0).toFixed(1)}%
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
             </div>
           )}
 

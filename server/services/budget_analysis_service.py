@@ -296,6 +296,9 @@ class BudgetAnalysisService:
         # Organize by category type
         for row in results:
             category_type = row.category_type.value.title()
+            # Only include budget-relevant types; skip Transfer, Income, Expense, Both
+            if category_type not in breakdown:
+                continue
             total = Decimal(str(row.total))
             percentage = (total / total_spending * Decimal("100")).quantize(Decimal("0.01")) if total_spending > 0 else Decimal("0.00")
             

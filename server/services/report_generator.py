@@ -7,7 +7,7 @@ and comparing against budget allocations.
 
 import logging
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 from uuid import UUID
 
@@ -238,7 +238,7 @@ class ReportGenerator:
 
         # Generate breakdowns
         ReportGenerator.generate_breakdowns(
-            db, report.id, user_id, period_start, period_end
+            db, report.id, budget_id, user_id, period_start, period_end
         )
 
         logger.info(f"Generated report {report.id} for budget {budget_id}")
@@ -248,6 +248,7 @@ class ReportGenerator:
     def generate_breakdowns(
         db: Session,
         report_id: UUID,
+        budget_id: UUID,
         user_id: UUID,
         period_start: datetime,
         period_end: datetime,
@@ -265,7 +266,14 @@ class ReportGenerator:
         Returns:
             List of created breakdowns
         """
-        # Get all user categories
+        budget = (
+            db.query(Budget)
+            .filter(Budget.id == budget_id, Budget.user_id == user_id)
+            .first()
+        )
+        if not budget:
+            raise ValueError(f"Budget {budget_id} not found for report breakdown generation")
+
         categories = (
             db.query(Category)
             .filter(
@@ -278,52 +286,72 @@ class ReportGenerator:
             .all()
         )
 
-        breakdowns = []
-
-        for category in categories:
-            # Get budgeted amount (proportional to category type)
-            # For simplicity, we'll use the total budget percentage
-            # In a more complex implementation, you'd track per-category budgets
-
-            # Get actual spending for this category
-            result = (
+        category_actuals: dict[UUID, Decimal] = {}
+        category_tx_counts: dict[UUID, int] = {}
+        if categories:
+            category_ids = [c.id for c in categories]
+            grouped = (
                 db.query(
+                    Transaction.category_id,
                     func.coalesce(func.sum(Transaction.amount), 0),
                     func.count(Transaction.id),
                 )
                 .filter(
                     Transaction.user_id == user_id,
-                    Transaction.category_id == category.id,
+                    Transaction.category_id.in_(category_ids),
                     Transaction.transaction_date >= period_start,
                     Transaction.transaction_date <= period_end,
                     Transaction.status == TransactionStatus.POSTED,
                     Transaction.transaction_type == TransactionType.EXPENSE,
                 )
-                .first()
+                .group_by(Transaction.category_id)
+                .all()
+            )
+            for category_id, total, tx_count in grouped:
+                category_actuals[category_id] = Decimal(str(total)) if total else Decimal("0")
+                category_tx_counts[category_id] = int(tx_count or 0)
+
+        categories_by_type: dict[CategoryType, list[Category]] = {
+            CategoryType.NEEDS: [],
+            CategoryType.WANTS: [],
+            CategoryType.SAVINGS: [],
+        }
+        for category in categories:
+            categories_by_type[category.category_type].append(category)
+
+        type_budget_totals: dict[CategoryType, Decimal] = {
+            CategoryType.NEEDS: budget.needs_amount or Decimal("0"),
+            CategoryType.WANTS: budget.wants_amount or Decimal("0"),
+            CategoryType.SAVINGS: budget.savings_amount or Decimal("0"),
+        }
+
+        breakdowns = []
+
+        for category in categories:
+            actual_amount = category_actuals.get(category.id, Decimal("0"))
+            transaction_count = category_tx_counts.get(category.id, 0)
+
+            category_type = category.category_type
+            typed_categories = categories_by_type.get(category_type, [])
+            type_budget_total = type_budget_totals.get(category_type, Decimal("0"))
+            type_actual_total = sum(
+                category_actuals.get(c.id, Decimal("0")) for c in typed_categories
             )
 
-            actual_amount = Decimal(str(result[0])) if result[0] else Decimal("0")
-            transaction_count = result[1] if result[1] else 0
-
-            # Get budget allocation (simplified - use budget totals)
-            # In reality, you'd have per-category budgets
-            budget = (
-                db.query(Budget)
-                .filter(Budget.user_id == user_id, Budget.is_active == True)  # noqa: E712
-                .first()
-            )
-
-            if budget:
-                if category.category_type == CategoryType.NEEDS:
-                    budgeted_amount = budget.needs_amount or Decimal("0")
-                elif category.category_type == CategoryType.WANTS:
-                    budgeted_amount = budget.wants_amount or Decimal("0")
-                else:
-                    budgeted_amount = budget.savings_amount or Decimal("0")
-            else:
+            # Allocate bucket budget per category:
+            # - weighted by actuals if there is spending in that type
+            # - otherwise split evenly across categories in that type
+            if type_budget_total <= 0 or not typed_categories:
                 budgeted_amount = Decimal("0")
+            elif type_actual_total > 0:
+                budgeted_amount = (type_budget_total * (actual_amount / type_actual_total)).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+            else:
+                budgeted_amount = (type_budget_total / Decimal(len(typed_categories))).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
 
-            # Calculate deviation
             deviation_data = BudgetCalculator.calculate_deviation(
                 budgeted_amount, actual_amount
             )

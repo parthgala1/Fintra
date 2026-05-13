@@ -119,32 +119,8 @@ export default function UploadPage() {
   return (
     <div className="min-h-screen bg-[#020617]">
       {/* Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-[#020617]/90 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-2">
-            <Link href="/dashboard" className="flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-green-500">
-                <TrendingUp className="h-5 w-5 text-[#020617]" />
-              </div>
-              <span className="text-xl font-semibold tracking-tight">Fintra</span>
-            </Link>
-          </div>
-          
-          <nav className="hidden items-center gap-6 md:flex">
-            <Link href="/dashboard" className="text-sm font-medium text-slate-400 hover:text-white transition-colors">Dashboard</Link>
-            <Link href="/transactions" className="text-sm font-medium text-green-400">Transactions</Link>
-            <Link href="/budgets" className="text-sm font-medium text-slate-400 hover:text-white transition-colors">Budget</Link>
-          </nav>
 
-          <div className="flex items-center gap-3">
-            <Link href="/transactions" className="text-sm text-slate-400 hover:text-white transition-colors">
-              View Transactions
-            </Link>
-          </div>
-        </div>
-      </header>
-
-      <main className="pt-24 pb-12">
+      <main className="p-6 pb-12">
         <div className="mx-auto max-w-3xl px-6">
           {/* Page Header */}
           <div className="mb-8">

@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from auth.router import router as auth_router
 from routers import transaction, category, category_mapping, bank_account, upload
 from routers.budget import router as budget_router
+from routers.budget_category import router as budget_category_router
 from routers.budget_report import router as budget_report_router
 from routers.budget_scenario import router as budget_scenario_router
 from routers.budget_alert import router as budget_alert_router
@@ -93,6 +94,7 @@ app.include_router(upload.router, prefix="/api")
 # Include budget routers (alert router must be before budget router to match /budgets/alerts first)
 app.include_router(budget_alert_router, prefix="/api")
 app.include_router(budget_router, prefix="/api")
+app.include_router(budget_category_router, prefix="/api")
 app.include_router(budget_report_router, prefix="/api")
 app.include_router(budget_scenario_router, prefix="/api")
 

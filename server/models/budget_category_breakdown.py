@@ -28,7 +28,7 @@ class BudgetCategoryBreakdown(Base):
     
     # Deviation
     deviation = Column(Numeric(15, 2), nullable=True)  # actual - budgeted (negative = under budget)
-    deviation_percentage = Column(Numeric(5, 2), nullable=True)
+    deviation_percentage = Column(Numeric(10, 2), nullable=True)  # widened to handle large overruns
     
     # Transaction count
     transaction_count = Column(Numeric(10, 0), nullable=True)

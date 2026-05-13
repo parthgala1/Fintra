@@ -80,8 +80,10 @@ class BudgetReportResponse(BudgetReportBase):
     needs_percentage_used: Optional[Decimal] = None
     wants_percentage_used: Optional[Decimal] = None
     savings_percentage_used: Optional[Decimal] = None
+    remaining_budget: Optional[Decimal] = None
     is_over_budget: bool
     summary: Optional[str] = None
+    last_calculated_at: Optional[datetime] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -90,7 +92,8 @@ class BudgetReportResponse(BudgetReportBase):
         'total_income', 'budgeted_needs', 'budgeted_wants', 'budgeted_savings',
         'total_budgeted', 'actual_needs', 'actual_wants', 'actual_savings',
         'total_spent', 'needs_deviation', 'wants_deviation', 'savings_deviation',
-        'needs_percentage_used', 'wants_percentage_used', 'savings_percentage_used'
+        'needs_percentage_used', 'wants_percentage_used', 'savings_percentage_used',
+        'remaining_budget'
     )
     def serialize_decimal_fields(self, value: Decimal) -> float:
         """Convert Decimal to float for JSON serialization.

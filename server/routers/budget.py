@@ -13,12 +13,15 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from auth.router import get_current_user
 from database import get_db
 from models.budget_history_analysis import BudgetHistoryAnalysis
 from models.budget import Budget, BudgetType, BudgetPeriod
+from models.budget_category import BudgetCategory
+from models.category import Category, CategoryType
 from models.user import User
 from schemas.budget_analysis import (
     BudgetAnalysisRequest,
@@ -53,6 +56,56 @@ def get_current_user_dep(
 ) -> User:
     """Dependency to get current authenticated user."""
     return get_current_user(token, db)
+
+
+def _initialize_budget_allocations(db: Session, user_id: UUID, budget: Budget) -> None:
+    existing = (
+        db.query(BudgetCategory)
+        .filter(BudgetCategory.budget_id == budget.id)
+        .count()
+    )
+    if existing > 0:
+        return
+
+    categories = (
+        db.query(Category)
+        .filter(
+            or_(Category.user_id == user_id, Category.is_system == True),  # noqa: E712
+            Category.is_active == True,  # noqa: E712
+            Category.category_type.in_([CategoryType.NEEDS, CategoryType.WANTS, CategoryType.SAVINGS]),
+        )
+        .order_by(Category.name.asc())
+        .all()
+    )
+
+    grouped = {
+        CategoryType.NEEDS: [],
+        CategoryType.WANTS: [],
+        CategoryType.SAVINGS: [],
+    }
+    for category in categories:
+        grouped[category.category_type].append(category)
+
+    budgets_by_type = {
+        CategoryType.NEEDS: Decimal(str(budget.needs_amount or 0)),
+        CategoryType.WANTS: Decimal(str(budget.wants_amount or 0)),
+        CategoryType.SAVINGS: Decimal(str(budget.savings_amount or 0)),
+    }
+
+    for category_type, typed_categories in grouped.items():
+        if not typed_categories:
+            continue
+        each_amount = (budgets_by_type[category_type] / Decimal(len(typed_categories))).quantize(Decimal("0.01"))
+        for idx, category in enumerate(typed_categories):
+            db.add(
+                BudgetCategory(
+                    budget_id=budget.id,
+                    category_id=category.id,
+                    category_type=category_type,
+                    budgeted_amount=each_amount,
+                    sort_order=idx,
+                )
+            )
 
 
 @router.get("", response_model=BudgetListResponse)
@@ -320,6 +373,9 @@ def create_budget(
         db.commit()
         db.refresh(budget)
 
+        _initialize_budget_allocations(db, current_user.id, budget)
+        db.commit()
+
         BudgetAnalysisService.link_analysis_to_budget(db, analysis, budget.id)
 
         logger.info(f"[BudgetCreate] Created budget {budget.id} from analysis {analysis.id}")
@@ -408,6 +464,9 @@ def create_budget(
     db.add(budget)
     db.commit()
     db.refresh(budget)
+
+    _initialize_budget_allocations(db, current_user.id, budget)
+    db.commit()
     
     logger.info(f"Created budget {budget.id} for user {current_user.id}")
     
@@ -545,6 +604,32 @@ def update_budget(
     # Update fields
     for field, value in update_data.items():
         setattr(budget, field, value)
+
+    # If budget totals changed, rescale existing allocations by category type
+    if "needs_amount" in update_data or "wants_amount" in update_data or "savings_amount" in update_data:
+        allocations = (
+            db.query(BudgetCategory)
+            .filter(BudgetCategory.budget_id == budget.id)
+            .all()
+        )
+
+        for category_type, target_amount in [
+            (CategoryType.NEEDS, Decimal(str(budget.needs_amount or 0))),
+            (CategoryType.WANTS, Decimal(str(budget.wants_amount or 0))),
+            (CategoryType.SAVINGS, Decimal(str(budget.savings_amount or 0))),
+        ]:
+            typed = [a for a in allocations if a.category_type == category_type]
+            if not typed:
+                continue
+            current_total = sum(Decimal(str(a.budgeted_amount or 0)) for a in typed)
+            if current_total > 0:
+                ratio = target_amount / current_total
+                for alloc in typed:
+                    alloc.budgeted_amount = (Decimal(str(alloc.budgeted_amount or 0)) * ratio).quantize(Decimal("0.01"))
+            else:
+                each_amount = (target_amount / Decimal(len(typed))).quantize(Decimal("0.01"))
+                for alloc in typed:
+                    alloc.budgeted_amount = each_amount
     
     db.commit()
     db.refresh(budget)

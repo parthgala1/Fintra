@@ -7,6 +7,7 @@ sandbox budget scenarios for what-if simulations.
 
 import logging
 from decimal import Decimal
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -46,28 +47,35 @@ def get_current_user_dep(
 
 @router.get("", response_model=ScenarioListResponse)
 def list_scenarios(
+    budget_id: Optional[UUID] = None,
     current_user: User = Depends(get_current_user_dep),
     db: Session = Depends(get_db),
 ):
     """
-    List all scenarios for the current user.
+    List all scenarios for the current user, optionally filtered by budget.
     
     Args:
+        budget_id: Optional budget UUID to filter by
         current_user: Current authenticated user
         db: Database session
     
     Returns:
         List of scenarios
     """
-    scenarios = (
-        db.query(BudgetScenario)
-        .filter(
-            BudgetScenario.user_id == current_user.id,
-            BudgetScenario.is_active == True,  # noqa: E712
-        )
-        .order_by(BudgetScenario.created_at.desc())
-        .all()
+    query = db.query(BudgetScenario).filter(
+        BudgetScenario.user_id == current_user.id,
+        BudgetScenario.is_active == True,  # noqa: E712
     )
+    if budget_id:
+        # Include scenarios for this budget AND legacy scenarios with no budget_id
+        from sqlalchemy import or_
+        query = query.filter(
+            or_(
+                BudgetScenario.budget_id == budget_id,
+                BudgetScenario.budget_id.is_(None),
+            )
+        )
+    scenarios = query.order_by(BudgetScenario.created_at.desc()).all()
     
     return ScenarioListResponse(
         scenarios=[ScenarioResponse.model_validate(s) for s in scenarios],
@@ -380,21 +388,27 @@ def calculate_scenario(
     current_wants = scenario.current_wants_amount or Decimal("0")
     current_savings = scenario.current_savings_amount or Decimal("0")
     
-    # Calculate new income
+    # Calculate new income — prefer explicit override, then scenario's stored value, then associated budget's income
     base_income = scenario.new_income or Decimal("0")
     income_change = calc_data.income_change or Decimal("0")
-    new_income = calc_data.new_income or (base_income + income_change)
+    new_income = calc_data.new_income or (base_income + income_change if (base_income + income_change) > 0 else base_income)
+    
+    # If still no income, try to get from associated budget
+    if new_income <= 0 and scenario.budget_id:
+        budget = db.query(Budget).filter(Budget.id == scenario.budget_id).first()
+        if budget:
+            new_income = budget.total_budget or Decimal("0")
     
     if new_income <= 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid income value",
+            detail="Scenario has no income set and no associated budget found. Please provide an income.",
         )
     
-    # Get percentages
-    needs_pct = calc_data.scenario_needs_percentage or BudgetCalculator.DEFAULT_NEEDS_PERCENTAGE
-    wants_pct = calc_data.scenario_wants_percentage or BudgetCalculator.DEFAULT_WANTS_PERCENTAGE
-    savings_pct = calc_data.scenario_savings_percentage or BudgetCalculator.DEFAULT_SAVINGS_PERCENTAGE
+    # Get percentages — prefer explicit override, then scenario's stored values, then defaults
+    needs_pct = calc_data.scenario_needs_percentage or scenario.scenario_needs_percentage or BudgetCalculator.DEFAULT_NEEDS_PERCENTAGE
+    wants_pct = calc_data.scenario_wants_percentage or scenario.scenario_wants_percentage or BudgetCalculator.DEFAULT_WANTS_PERCENTAGE
+    savings_pct = calc_data.scenario_savings_percentage or scenario.scenario_savings_percentage or BudgetCalculator.DEFAULT_SAVINGS_PERCENTAGE
     
     # Validate percentages
     if not BudgetCalculator.validate_percentages(needs_pct, wants_pct, savings_pct):

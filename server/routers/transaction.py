@@ -5,12 +5,15 @@ Provides CRUD endpoints for transactions.
 """
 
 import logging
+from calendar import monthrange
+from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, contains_eager
+from sqlalchemy import cast, String
 
 from auth.jwt import verify_token
 from auth.router import get_current_user
@@ -18,6 +21,8 @@ from database import get_db
 from models.transaction import Transaction
 from models.user import User
 from models.transaction import TransactionType
+from models.budget import Budget, BudgetPeriod
+from models.category import Category
 from schemas.transaction import (
     BulkCategoryUpdate,
     TransactionCreate,
@@ -25,6 +30,7 @@ from schemas.transaction import (
     TransactionResponse,
     TransactionUpdate,
 )
+from services.budget_report_recalculation_service import BudgetReportRecalculationService
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +48,82 @@ def get_current_user_dep(
     return get_current_user(token, db)
 
 
+def _resolve_period_bounds_for_date(
+    period: BudgetPeriod,
+    reference_date: datetime,
+) -> tuple[datetime, datetime]:
+    ref = reference_date
+    if period == BudgetPeriod.WEEKLY:
+        start = (ref - timedelta(days=ref.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        end = start + timedelta(days=6, hours=23, minutes=59, seconds=59)
+    elif period == BudgetPeriod.BIWEEKLY:
+        day = ref.day
+        biweek = (day - 1) // 14
+        start = ref.replace(day=biweek * 14 + 1, hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=13, hours=23, minutes=59, seconds=59)
+    elif period == BudgetPeriod.YEARLY:
+        start = ref.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        end = ref.replace(month=12, day=31, hour=23, minute=59, second=59, microsecond=999999)
+    else:
+        start = ref.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        _, last_day = monthrange(ref.year, ref.month)
+        end = ref.replace(day=last_day, hour=23, minute=59, second=59, microsecond=999999)
+    return start, end
+
+
+def _recalculate_impacted_budgets(
+    db: Session,
+    user_id: UUID,
+    dates: list[datetime],
+) -> None:
+    if not dates:
+        return
+
+    budgets = (
+        db.query(Budget)
+        .filter(Budget.user_id == user_id, Budget.is_active == True)  # noqa: E712
+        .all()
+    )
+
+    impacted: list[tuple[Budget, datetime]] = []
+    for budget in budgets:
+        for tx_date in dates:
+            if tx_date >= budget.start_date and (
+                budget.end_date is None or tx_date <= budget.end_date
+            ):
+                impacted.append((budget, tx_date))
+
+    # fallback to default budget if date-range matched none
+    if not impacted:
+        default_budget = next((b for b in budgets if b.is_default), None)
+        if default_budget:
+            impacted = [(default_budget, d) for d in dates]
+
+    seen = set()
+    for budget, tx_date in impacted:
+        period_start, period_end = _resolve_period_bounds_for_date(budget.period, tx_date)
+        key = (budget.id, period_start, period_end)
+        if key in seen:
+            continue
+        seen.add(key)
+        BudgetReportRecalculationService.recalculate(
+            db=db,
+            user_id=user_id,
+            budget_id=budget.id,
+            period_start=period_start,
+            period_end=period_end,
+        )
+
+
 @router.get("", response_model=TransactionListResponse)
 def list_transactions(
     page: int = 1,
     page_size: int = 50,
     bank_account_id: Optional[UUID] = None,
     category_id: Optional[UUID] = None,
+    category_type: Optional[str] = None,
     search: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -63,6 +139,7 @@ def list_transactions(
         page_size: Number of items per page
         bank_account_id: Filter by bank account
         category_id: Filter by category
+        category_type: Filter by category type (needs, wants, savings, transfer)
         search: Search in description
         start_date: Filter by start date (ISO format)
         end_date: Filter by end date (ISO format)
@@ -75,12 +152,23 @@ def list_transactions(
     """
     query = db.query(Transaction).filter(Transaction.user_id == current_user.id)
     
+    # Track if we need to join with Category
+    needs_category_join = category_type is not None
+    
     # Apply filters
     if bank_account_id:
         query = query.filter(Transaction.bank_account_id == bank_account_id)
     
     if category_id:
         query = query.filter(Transaction.category_id == category_id)
+    
+    if category_type:
+        # Join with Category table and filter by category_type
+        # The database stores enum values as uppercase, so we need to match that
+        cat_type_upper = category_type.upper()
+        query = query.join(Category, Transaction.category_id == Category.id).filter(
+            cast(Category.category_type, String) == cat_type_upper
+        )
     
     if search:
         query = query.filter(Transaction.description.ilike(f"%{search}%"))
@@ -106,15 +194,26 @@ def list_transactions(
     # Get total count
     total = query.count()
     
-    # Apply pagination
+    # Apply pagination and eager loading
     offset = (page - 1) * page_size
-    transactions = (
-        query
-        .options(joinedload(Transaction.category), joinedload(Transaction.bank_account))
-        .offset(offset)
-        .limit(page_size)
-        .all()
-    )
+    
+    # Use contains_eager if we joined Category, otherwise use joinedload
+    if needs_category_join:
+        transactions = (
+            query
+            .options(contains_eager(Transaction.category), joinedload(Transaction.bank_account))
+            .offset(offset)
+            .limit(page_size)
+            .all()
+        )
+    else:
+        transactions = (
+            query
+            .options(joinedload(Transaction.category), joinedload(Transaction.bank_account))
+            .offset(offset)
+            .limit(page_size)
+            .all()
+        )
     
     return TransactionListResponse(
         transactions=transactions,
@@ -205,6 +304,8 @@ def create_transaction(
     db.add(transaction)
     db.commit()
     db.refresh(transaction)
+
+    _recalculate_impacted_budgets(db, current_user.id, [transaction.transaction_date])
     
     logger.info(f"Created transaction {transaction.id} for user {current_user.id}")
     
@@ -251,6 +352,7 @@ def update_transaction(
     
     # Capture old category_id before updating (for learning)
     old_category_id = transaction.category_id
+    old_transaction_date = transaction.transaction_date
     
     # Update fields
     update_data = transaction_data.model_dump(exclude_unset=True)
@@ -259,6 +361,11 @@ def update_transaction(
     
     db.commit()
     db.refresh(transaction)
+
+    dates_to_recalculate = [transaction.transaction_date]
+    if old_transaction_date and old_transaction_date != transaction.transaction_date:
+        dates_to_recalculate.append(old_transaction_date)
+    _recalculate_impacted_budgets(db, current_user.id, dates_to_recalculate)
     
     # Learn from manual category corrections
     if "category_id" in update_data and update_data["category_id"] != old_category_id:
@@ -322,8 +429,11 @@ def delete_transaction(
             detail="Transaction not found",
         )
     
+    transaction_date = transaction.transaction_date
     db.delete(transaction)
     db.commit()
+
+    _recalculate_impacted_budgets(db, current_user.id, [transaction_date])
     
     logger.info(f"Deleted transaction {transaction_id}")
 
@@ -401,6 +511,9 @@ def bulk_update_categories(
     )
     
     db.commit()
+
+    recalc_dates = [t.transaction_date for t in transactions_to_update if t.transaction_date]
+    _recalculate_impacted_budgets(db, current_user.id, recalc_dates)
     
     logger.info(
         f"✓ Bulk updated {updated_count} transactions for user {current_user.id}. "

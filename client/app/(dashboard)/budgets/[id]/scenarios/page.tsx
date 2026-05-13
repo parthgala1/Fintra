@@ -16,10 +16,7 @@ import {
   AlertTriangle
 } from "lucide-react"
 import { api, Scenario, CreateScenarioData, ScenarioCalculation, Budget, BudgetReport } from "@/lib/api"
-import { useCategories } from "@/hooks/use-categories"
 import { formatINR } from "@/lib/utils"
-import { ImpactPreviewPanel } from "@/components/budget/ImpactPreviewPanel"
-import { useScenarioSimulation } from "@/hooks/useScenarioSimulation"
 
 interface BudgetScenariosPageProps {
   params: Promise<{ id: string }>
@@ -27,7 +24,6 @@ interface BudgetScenariosPageProps {
 
 export default function BudgetScenariosPage({ params }: BudgetScenariosPageProps) {
   const { id: budgetId } = use(params)
-  const { categories } = useCategories()
   const [scenarios, setScenarios] = useState<Scenario[]>([])
   const [budget, setBudget] = useState<Budget | null>(null)
   const [report, setReport] = useState<BudgetReport | null>(null)
@@ -44,22 +40,11 @@ export default function BudgetScenariosPage({ params }: BudgetScenariosPageProps
   const [formData, setFormData] = useState<CreateScenarioData>({
     name: "",
     description: "",
-    adjustments: {}
   })
-
-  const [categoryAdjustments, setCategoryAdjustments] = useState<Record<string, number>>({})
-
-  // Use the scenario simulation hook for real-time impact preview
-  const { simulation, isSimulating } = useScenarioSimulation({
-    budgetId,
-    categoryAdjustments,
-    currentBudget: budget ? {
-      total_amount: budget.total_amount,
-      needs_percentage: budget.needs_percentage,
-      wants_percentage: budget.wants_percentage,
-      savings_percentage: budget.savings_percentage
-    } : undefined
-  })
+  const [newIncome, setNewIncome] = useState<string>("")
+  const [needsPct, setNeedsPct] = useState<string>("")
+  const [wantsPct, setWantsPct] = useState<string>("")
+  const [savingsPct, setSavingsPct] = useState<string>("")
 
   const fetchData = async () => {
     try {
@@ -84,23 +69,23 @@ export default function BudgetScenariosPage({ params }: BudgetScenariosPageProps
 
   const handleCreate = async () => {
     if (!formData.name.trim()) return
-    
-    const adjustments: Record<string, number> = {}
-    Object.entries(categoryAdjustments).forEach(([catId, adjustment]) => {
-      if (adjustment !== 0) {
-        adjustments[catId] = adjustment
-      }
-    })
 
     setIsSaving(true)
     try {
       await api.createScenario(budgetId, {
-        ...formData,
-        adjustments
+        name: formData.name,
+        description: formData.description,
+        new_income: newIncome ? parseFloat(newIncome) : undefined,
+        needs_percentage: needsPct ? parseFloat(needsPct) : undefined,
+        wants_percentage: wantsPct ? parseFloat(wantsPct) : undefined,
+        savings_percentage: savingsPct ? parseFloat(savingsPct) : undefined,
       })
       setShowCreateModal(false)
-      setFormData({ name: "", description: "", adjustments: {} })
-      setCategoryAdjustments({})
+      setFormData({ name: "", description: "" })
+      setNewIncome("")
+      setNeedsPct("")
+      setWantsPct("")
+      setSavingsPct("")
       await fetchData()
     } catch (err) {
       console.error("Failed to create scenario:", err)
@@ -112,10 +97,7 @@ export default function BudgetScenariosPage({ params }: BudgetScenariosPageProps
   const handleCalculate = async (scenarioId: string) => {
     setCalculatingId(scenarioId)
     try {
-      const result = await api.calculateScenario(scenarioId, {
-        income_change: 0,
-        expense_changes: {}
-      })
+      const result = await api.calculateScenario(scenarioId, {})
       setCalculations(prev => ({ ...prev, [scenarioId]: result }))
     } catch (err) {
       console.error("Failed to calculate scenario:", err)
@@ -171,35 +153,8 @@ export default function BudgetScenariosPage({ params }: BudgetScenariosPageProps
   return (
     <div className="min-h-screen bg-[#020617]">
       {/* Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-[#020617]/90 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-2">
-            <Link href="/dashboard" className="flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-green-500">
-                <TrendingUp className="h-5 w-5 text-[#020617]" />
-              </div>
-              <span className="text-xl font-semibold tracking-tight">Fintra</span>
-            </Link>
-          </div>
-          
-          <nav className="hidden items-center gap-6 md:flex">
-            <Link href="/dashboard" className="text-sm font-medium text-slate-400 hover:text-white transition-colors">Dashboard</Link>
-            <Link href="/budgets" className="text-sm font-medium text-green-400">Budget</Link>
-          </nav>
 
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => setShowCreateModal(true)}
-              className="flex items-center gap-2 rounded-xl bg-green-500 px-4 py-2 text-sm font-semibold text-[#020617] transition-all hover:bg-green-400 cursor-pointer"
-            >
-              <Plus className="h-4 w-4" />
-              New Scenario
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="pt-24 pb-12">
+      <main className="p-6 pb-12">
         <div className="mx-auto max-w-7xl px-6">
           {/* Back Link */}
           <Link href={`/budgets/${budgetId}`} className="mb-6 inline-flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors">
@@ -342,17 +297,15 @@ export default function BudgetScenariosPage({ params }: BudgetScenariosPageProps
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-lg font-semibold text-white">Create Scenario</h3>
               <button 
-                onClick={() => { setShowCreateModal(false); setCategoryAdjustments({}) }}
+                onClick={() => setShowCreateModal(false)}
                 className="p-1 text-slate-400 hover:text-white cursor-pointer"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-              {/* Left: Form */}
-              <div className="space-y-4">
-                <div>
+            <div className="space-y-4">
+              <div>
                   <label className="block text-xs font-medium text-slate-400 uppercase mb-2">Scenario Name</label>
                   <input
                     type="text"
@@ -375,63 +328,94 @@ export default function BudgetScenariosPage({ params }: BudgetScenariosPageProps
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-slate-400 uppercase mb-3">
-                    Category Adjustments (percentage change)
+                  <label className="block text-xs font-medium text-slate-400 uppercase mb-2">
+                    New Monthly Income (optional)
                   </label>
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
-                    {categories.filter(c => c.type === "expense" || c.type === "both").map((cat) => (
-                      <div key={cat.id} className="flex items-center justify-between">
-                        <span className="text-sm text-slate-300">{cat.name}</span>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            value={categoryAdjustments[cat.id] || 0}
-                            onChange={(e) => setCategoryAdjustments({
-                              ...categoryAdjustments,
-                              [cat.id]: parseFloat(e.target.value) || 0
-                            })}
-                            className="w-20 rounded-lg border border-white/10 bg-white/5 py-1.5 px-2 text-sm text-white text-right focus:border-green-500 focus:outline-none"
-                            placeholder="0"
-                          />
-                          <span className="text-sm text-slate-400 w-6">%</span>
-                        </div>
-                      </div>
-                    ))}
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">₹</span>
+                    <input
+                      type="number"
+                      value={newIncome}
+                      onChange={(e) => setNewIncome(e.target.value)}
+                      placeholder={budget ? String(budget.total_amount) : "e.g. 80000"}
+                      className="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 pl-7 pr-4 text-white placeholder:text-slate-500 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                    />
                   </div>
-                  <p className="text-xs text-slate-500 mt-2">
-                    Use negative values to decrease budgets, positive to increase
-                  </p>
+                  <p className="text-xs text-slate-500 mt-1">Leave blank to use current budget income</p>
                 </div>
-              </div>
 
-              {/* Right: Impact Preview */}
-              <div>
-                <ImpactPreviewPanel
-                  isSimulating={isSimulating}
-                  beforeMetrics={budget ? {
-                    savingsRate: budget.savings_percentage || 0,
-                    investmentRate: 0,
-                    needsPercent: budget.needs_percentage || 0,
-                    wantsPercent: budget.wants_percentage || 0
-                  } : undefined}
-                  afterMetrics={simulation ? {
-                    newSavingsRate: simulation.newSavingsRate,
-                    newInvestmentRate: simulation.newInvestmentRate,
-                    newNeedsPercent: simulation.newNeedsPercent,
-                    newWantsPercent: simulation.newWantsPercent,
-                    savingsDelta: simulation.savingsDelta,
-                    investmentDelta: simulation.investmentDelta,
-                    needsDelta: simulation.needsDelta,
-                    wantsDelta: simulation.wantsDelta,
-                    estimatedDifference: simulation.estimatedDifference
-                  } : undefined}
-                />
-              </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-400 uppercase mb-2">Needs %</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        value={needsPct}
+                        onChange={(e) => setNeedsPct(e.target.value)}
+                        placeholder={budget ? String(budget.needs_percentage) : "50"}
+                        min="0" max="100"
+                        className="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 px-3 text-white placeholder:text-slate-500 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-400 uppercase mb-2">Wants %</label>
+                    <input
+                      type="number"
+                      value={wantsPct}
+                      onChange={(e) => setWantsPct(e.target.value)}
+                      placeholder={budget ? String(budget.wants_percentage) : "30"}
+                      min="0" max="100"
+                      className="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 px-3 text-white placeholder:text-slate-500 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-400 uppercase mb-2">Savings %</label>
+                    <input
+                      type="number"
+                      value={savingsPct}
+                      onChange={(e) => setSavingsPct(e.target.value)}
+                      placeholder={budget ? String(budget.savings_percentage) : "20"}
+                      min="0" max="100"
+                      className="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 px-3 text-white placeholder:text-slate-500 focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500">Leave blank to use current budget percentages</p>
+
+                {/* Live preview */}
+                {(newIncome || needsPct || wantsPct || savingsPct) && budget && (
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-2">
+                    <p className="text-xs font-medium text-slate-400 uppercase">Projected Amounts</p>
+                    {(() => {
+                      const income = newIncome ? parseFloat(newIncome) : budget.total_amount
+                      const needs = needsPct ? parseFloat(needsPct) : (budget.needs_percentage ?? 50)
+                      const wants = wantsPct ? parseFloat(wantsPct) : (budget.wants_percentage ?? 30)
+                      const savings = savingsPct ? parseFloat(savingsPct) : (budget.savings_percentage ?? 20)
+                      return (
+                        <>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-slate-400">Needs ({needs}%)</span>
+                            <span className="text-white">{formatINR(income * needs / 100, 0)}</span>
+                          </div>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-slate-400">Wants ({wants}%)</span>
+                            <span className="text-white">{formatINR(income * wants / 100, 0)}</span>
+                          </div>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-slate-400">Savings ({savings}%)</span>
+                            <span className="text-green-400">{formatINR(income * savings / 100, 0)}</span>
+                          </div>
+                        </>
+                      )
+                    })()}
+                  </div>
+                )}
             </div>
 
             <div className="mt-6 flex items-center justify-end gap-3">
               <button
-                onClick={() => { setShowCreateModal(false); setCategoryAdjustments({}) }}
+                onClick={() => setShowCreateModal(false)}
                 className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white hover:bg-white/10 transition-colors cursor-pointer"
               >
                 Cancel

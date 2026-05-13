@@ -28,6 +28,8 @@ export default function BudgetDetailPage() {
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [reportLoading, setReportLoading] = useState(false);
   const [recommendationsLoading, setRecommendationsLoading] = useState(false);
+  const [isGeneratingRecs, setIsGeneratingRecs] = useState(false);
+  const [isRecalculatingReport, setIsRecalculatingReport] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
@@ -71,6 +73,31 @@ export default function BudgetDetailPage() {
       router.push("/budgets");
     } catch (err) {
       console.error("Failed to delete budget:", err);
+    }
+  };
+
+  const handleGenerateRecommendations = async () => {
+    setIsGeneratingRecs(true);
+    try {
+      await api.generateRecommendations({ type: "budget" });
+      const result = await api.getRecommendations();
+      setRecommendations(result.recommendations || []);
+    } catch (err) {
+      console.error("Failed to generate recommendations:", err);
+    } finally {
+      setIsGeneratingRecs(false);
+    }
+  };
+
+  const handleRecalculateReport = async () => {
+    setIsRecalculatingReport(true);
+    try {
+      const report = await api.recalculateCurrentReport(budgetId);
+      setCurrentReport(report);
+    } catch (err) {
+      console.error("Failed to recalculate report:", err);
+    } finally {
+      setIsRecalculatingReport(false);
     }
   };
 
@@ -133,52 +160,9 @@ export default function BudgetDetailPage() {
   return (
     <div className="min-h-screen bg-[#020617]">
       {/* Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-[#020617]/90 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-2">
-            <Link href="/dashboard" className="flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-green-500">
-                <TrendingUp className="h-5 w-5 text-[#020617]" />
-              </div>
-              <span className="text-xl font-semibold tracking-tight">
-                Fintra
-              </span>
-            </Link>
-          </div>
+      
 
-          <nav className="hidden items-center gap-6 md:flex">
-            <Link
-              href="/dashboard"
-              className="text-sm font-medium text-slate-400 hover:text-white transition-colors"
-            >
-              Dashboard
-            </Link>
-            <Link
-              href="/transactions"
-              className="text-sm font-medium text-slate-400 hover:text-white transition-colors"
-            >
-              Transactions
-            </Link>
-            <Link
-              href="/budgets"
-              className="text-sm font-medium text-green-400"
-            >
-              Budget
-            </Link>
-          </nav>
-
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setShowDeleteConfirm(true)}
-              className="rounded-lg p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-            >
-              <Trash2 className="h-5 w-5" />
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="pt-24 pb-12">
+      <main className="p-6 pb-12">
         <div className="mx-auto max-w-7xl px-6">
           {/* Page Header */}
           <div className="mb-8">
@@ -219,6 +203,18 @@ export default function BudgetDetailPage() {
                   <BarChart3 className="h-4 w-4" />
                   View Reports
                 </Link>
+                <button
+                  onClick={handleRecalculateReport}
+                  disabled={isRecalculatingReport}
+                  className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-white hover:bg-white/10 transition-colors disabled:opacity-60 cursor-pointer"
+                >
+                  {isRecalculatingReport ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Calculator className="h-4 w-4" />
+                  )}
+                  Recalculate
+                </button>
               </div>
             </div>
           </div>
@@ -302,6 +298,8 @@ export default function BudgetDetailPage() {
               report={currentReport}
               recommendations={recommendations}
               isLoading={reportLoading || recommendationsLoading}
+              onGenerateRecommendations={handleGenerateRecommendations}
+              isGenerating={isGeneratingRecs}
             />
           </div>
 
@@ -316,6 +314,12 @@ export default function BudgetDetailPage() {
                 View Detailed Report
               </Link>
             </div>
+
+            {currentReport?.last_calculated_at && (
+              <p className="mb-4 text-xs text-slate-500">
+                Last calculated: {formatDate(currentReport.last_calculated_at)}
+              </p>
+            )}
 
             {reportLoading ? (
               <div className="flex items-center justify-center py-8">

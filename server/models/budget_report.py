@@ -44,10 +44,14 @@ class BudgetReport(Base):
     needs_percentage_used = Column(Numeric(5, 2), nullable=True)
     wants_percentage_used = Column(Numeric(5, 2), nullable=True)
     savings_percentage_used = Column(Numeric(5, 2), nullable=True)
+
+    # Remaining budget for period
+    remaining_budget = Column(Numeric(15, 2), nullable=True)
     
     # Summary
     is_over_budget = Column(Boolean, default=False)
     summary = Column(Text, nullable=True)
+    last_calculated_at = Column(DateTime(timezone=True), nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

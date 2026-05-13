@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { unstable_noStore as noStore } from "next/cache";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, TrendingUp } from "lucide-react";
@@ -13,6 +14,7 @@ import { BudgetCreateForm } from "@/components/budget/BudgetCreateForm";
 import { BudgetPreview } from "@/components/budget/BudgetPreview";
 
 export default function CreateBudgetPage() {
+  noStore();
   const router = useRouter();
   const [analysisInput, setAnalysisInput] = useState<BudgetAnalyzeRequest | null>(null);
   const [analysis, setAnalysis] = useState<BudgetAnalysisResponse | null>(null);
@@ -56,6 +58,13 @@ export default function CreateBudgetPage() {
         confirmed: true,
       });
 
+      // Auto-generate recommendations so the detail page has content immediately
+      try {
+        await api.generateRecommendations({ type: "budget" });
+      } catch {
+        // Non-critical — swallow and continue
+      }
+
       router.push(`/budgets/${budget.id}`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to create budget.");
@@ -66,22 +75,8 @@ export default function CreateBudgetPage() {
 
   return (
     <div className="min-h-screen bg-[#020617] text-white">
-      <header className="fixed left-0 right-0 top-0 z-40 border-b border-white/10 bg-[#020617]/90 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-green-500">
-              <TrendingUp className="h-5 w-5 text-[#020617]" />
-            </div>
-            <span className="text-xl font-semibold tracking-tight">Fintra</span>
-          </Link>
 
-          <Link href="/budgets" className="text-sm text-slate-400 transition hover:text-white">
-            Back to Budgets
-          </Link>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-4xl px-6 pb-12 pt-24">
+      <main className="mx-auto max-w-4xl px-6 pb-12 p-6">
         <div className="mb-8">
           <Link
             href="/budgets"
