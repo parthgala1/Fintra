@@ -371,6 +371,11 @@ export interface CreateBudgetWithAnalysisRequest {
   analysis_id: string;
   income?: number;
   confirmed: boolean;
+  rule_type: "fifty_thirty_twenty" | "custom" | "manual_custom";
+  /** Only required when rule_type is "manual_custom" */
+  custom_needs_percentage?: number;
+  custom_wants_percentage?: number;
+  custom_savings_percentage?: number;
 }
 
 // Budget Generation Types
@@ -1618,13 +1623,44 @@ export const api = {
       scenario_wants_percentage: data.wants_percentage || null,
       scenario_savings_percentage: data.savings_percentage || null,
     };
-    return fetchWithAuth<ScenarioCalculation>(
+    const response = await fetchWithAuth<any>(
       `/api/scenarios/${id}/calculate`,
       {
         method: "POST",
         body: JSON.stringify(backendData),
       },
     );
+    
+    // Normalize the response to map server fields to frontend interface
+    // Server returns: scenario_needs_amount, scenario_wants_amount, scenario_savings_amount
+    // Frontend expects: calculated_needs, calculated_wants, calculated_savings
+    const calculatedNeeds = parseNumber(response.scenario_needs_amount);
+    const calculatedWants = parseNumber(response.scenario_wants_amount);
+    const calculatedSavings = parseNumber(response.scenario_savings_amount);
+    const newIncome = parseNumber(response.new_income);
+    
+    // Compute derived fields for UI
+    const newTotalBudget = calculatedNeeds + calculatedWants + calculatedSavings;
+    const projectedSpending = calculatedNeeds + calculatedWants; // expenses only
+    const difference = newIncome - projectedSpending; // what's left after expenses (for savings)
+    
+    return {
+      original_income: newIncome, // The original budget amount
+      new_income: newIncome,
+      income_change_percentage: parseNumber(response.income_change || 0) > 0 
+        ? ((parseNumber(response.income_change || 0) / newIncome) * 100)
+        : 0,
+      needs_percentage: parseNumber(response.needs_ratio || 0),
+      wants_percentage: parseNumber(response.wants_ratio || 0), // Approximate from ratio
+      savings_percentage: parseNumber(response.savings_rate || 0),
+      calculated_needs: calculatedNeeds,
+      calculated_wants: calculatedWants,
+      calculated_savings: calculatedSavings,
+      // Additional UI fields
+      new_total_budget: newTotalBudget,
+      projected_spending: projectedSpending,
+      difference: difference,
+    };
   },
 
   async applyScenario(

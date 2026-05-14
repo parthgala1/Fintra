@@ -208,19 +208,29 @@ def get_current_report(
         .first()
     )
     
+    # If existing report found and valid (has key values), return it
+    # Auto-heal: if key values are null (stale data), recalculate
     if existing_report and not recalculate:
-        # Get breakdowns
-        breakdowns = (
-            db.query(BudgetCategoryBreakdown)
-            .filter(BudgetCategoryBreakdown.budget_report_id == existing_report.id)
-            .all()
+        # Check if report has valid data (key fields are not null)
+        has_valid_data = (
+            existing_report.total_budgeted is not None
+            and existing_report.total_budgeted > 0
         )
         
-        return BudgetReportWithBreakdowns(
-            **BudgetReportResponse.model_validate(existing_report).model_dump(),
-            breakdowns=[BreakdownResponse.model_validate(b) for b in breakdowns],
-        )
-
+        if has_valid_data:
+            # Get breakdowns
+            breakdowns = (
+                db.query(BudgetCategoryBreakdown)
+                .filter(BudgetCategoryBreakdown.budget_report_id == existing_report.id)
+                .all()
+            )
+            
+            return BudgetReportWithBreakdowns(
+                **BudgetReportResponse.model_validate(existing_report).model_dump(),
+                breakdowns=[BreakdownResponse.model_validate(b) for b in breakdowns],
+            )
+    
+    # If no valid existing report or recalculate requested, generate new one
     report = BudgetReportRecalculationService.recalculate(
         db=db,
         user_id=current_user.id,

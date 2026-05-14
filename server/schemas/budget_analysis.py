@@ -6,9 +6,9 @@ Pydantic models for budget analysis API requests and responses.
 
 from datetime import date
 from decimal import Decimal
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class CategoryItem(BaseModel):
@@ -60,6 +60,42 @@ class BudgetCreateWithAnalysisRequest(BaseModel):
     analysis_id: UUID
     income: Optional[Decimal] = Field(None, ge=0)
     confirmed: bool = Field(True)
+    rule_type: Literal["fifty_thirty_twenty", "custom", "manual_custom"] = Field(
+        "custom",
+        description=(
+            "fifty_thirty_twenty: fixed 50/30/20 splits; "
+            "custom: historical spending percentages; "
+            "manual_custom: user-supplied percentages via custom_*_percentage fields"
+        ),
+    )
+    # Only used when rule_type == "manual_custom"
+    custom_needs_percentage: Optional[Decimal] = Field(None, ge=0, le=100)
+    custom_wants_percentage: Optional[Decimal] = Field(None, ge=0, le=100)
+    custom_savings_percentage: Optional[Decimal] = Field(None, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def validate_manual_custom_fields(self):
+        if self.rule_type == "manual_custom":
+            fields = [
+                self.custom_needs_percentage,
+                self.custom_wants_percentage,
+                self.custom_savings_percentage,
+            ]
+            if any(v is None for v in fields):
+                raise ValueError(
+                    "custom_needs_percentage, custom_wants_percentage, and "
+                    "custom_savings_percentage are all required when rule_type is manual_custom"
+                )
+            total = (
+                self.custom_needs_percentage
+                + self.custom_wants_percentage
+                + self.custom_savings_percentage
+            )
+            if abs(total - Decimal("100")) > Decimal("0.5"):
+                raise ValueError(
+                    f"Custom percentages must sum to 100, got {total}"
+                )
+        return self
 
 
 class BudgetHistoryAnalysisResponse(BaseModel):

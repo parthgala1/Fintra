@@ -49,12 +49,13 @@ describe("HistoricalBreakdown", () => {
     render(
       <HistoricalBreakdown
         analysis={mockAnalysis}
+        budgetStartDate="2026-05-01"
         onConfirm={vi.fn()}
         onCancel={vi.fn()}
       />,
     );
 
-    expect(screen.getByText("Historical Breakdown")).toBeInTheDocument();
+    expect(screen.getByText("Historical Transaction Breakdown")).toBeInTheDocument();
     expect(screen.getByText("Needs")).toBeInTheDocument();
     expect(screen.getByText("Wants")).toBeInTheDocument();
     expect(screen.getByText("Savings")).toBeInTheDocument();
@@ -67,6 +68,7 @@ describe("HistoricalBreakdown", () => {
     render(
       <HistoricalBreakdown
         analysis={mockAnalysis}
+        budgetStartDate="2026-05-01"
         onConfirm={vi.fn()}
         onCancel={vi.fn()}
       />,

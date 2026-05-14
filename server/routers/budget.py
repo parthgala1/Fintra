@@ -333,6 +333,32 @@ def create_budget(
         wants_percentage = Decimal(str(analysis.wants_percentage)).quantize(Decimal("0.01"))
         savings_percentage = (Decimal("100.00") - needs_percentage - wants_percentage).quantize(Decimal("0.01"))
 
+        # Determine allocations based on rule type selected by the user
+        rule_type = getattr(budget_data, "rule_type", "custom")
+        if rule_type == "fifty_thirty_twenty":
+            chosen_budget_type = BudgetType.FIFTY_THIRTY_TWENTY
+            needs_percentage = Decimal("50.00")
+            wants_percentage = Decimal("30.00")
+            savings_percentage = Decimal("20.00")
+            logger.info(
+                f"[BudgetCreate] User chose 50/30/20 rule for budget '{budget_data.name}'"
+            )
+        elif rule_type == "manual_custom":
+            chosen_budget_type = BudgetType.CUSTOM
+            needs_percentage = Decimal(str(budget_data.custom_needs_percentage)).quantize(Decimal("0.01"))
+            wants_percentage = Decimal(str(budget_data.custom_wants_percentage)).quantize(Decimal("0.01"))
+            savings_percentage = (Decimal("100.00") - needs_percentage - wants_percentage).quantize(Decimal("0.01"))
+            logger.info(
+                f"[BudgetCreate] User chose manual custom rule for budget '{budget_data.name}' "
+                f"with N={needs_percentage}% W={wants_percentage}% S={savings_percentage}%"
+            )
+        else:
+            chosen_budget_type = BudgetType.CUSTOM
+            logger.info(
+                f"[BudgetCreate] User chose custom (historical) rule for budget '{budget_data.name}' "
+                f"with N={needs_percentage}% W={wants_percentage}% S={savings_percentage}%"
+            )
+
         total_budget = (
             Decimal(str(budget_data.income)).quantize(Decimal("0.01"))
             if budget_data.income is not None
@@ -344,7 +370,7 @@ def create_budget(
             needs_percentage=needs_percentage,
             wants_percentage=wants_percentage,
             savings_percentage=savings_percentage,
-            budget_type=BudgetType.CUSTOM,
+            budget_type=chosen_budget_type,
         )
 
         start_dt = datetime.combine(budget_data.budget_start_date, time.min)
@@ -354,7 +380,7 @@ def create_budget(
         budget = Budget(
             user_id=current_user.id,
             name=budget_data.name,
-            budget_type=BudgetType.CUSTOM,
+            budget_type=chosen_budget_type,
             period=BudgetPeriod.MONTHLY,
             total_budget=total_budget,
             needs_percentage=needs_percentage,

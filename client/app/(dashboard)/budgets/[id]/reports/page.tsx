@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { api, BudgetReport as BudgetReportType } from "@/lib/api";
 import { formatINR } from "@/lib/utils";
+import { ReportDetailModal } from "@/components/budget/ReportDetailModal";
 
 interface BudgetReportsPageProps {
   params: Promise<{ id: string }>;
@@ -29,6 +30,7 @@ export default function BudgetReportsPage({ params }: BudgetReportsPageProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedReport, setSelectedReport] = useState<BudgetReportType | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -282,7 +284,8 @@ export default function BudgetReportsPage({ params }: BudgetReportsPageProps) {
                 {reports.map((report) => (
                   <div
                     key={report.id}
-                    className="p-6 hover:bg-white/5 transition-colors"
+                    className="p-6 hover:bg-white/5 transition-colors cursor-pointer"
+                    onClick={() => setSelectedReport(report)}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-4">
@@ -363,6 +366,15 @@ export default function BudgetReportsPage({ params }: BudgetReportsPageProps) {
           </div>
         </div>
       </main>
+
+      {/* Report Detail Modal */}
+      {selectedReport && (
+        <ReportDetailModal
+          report={selectedReport}
+          budget={budget}
+          onClose={() => setSelectedReport(null)}
+        />
+      )}
     </div>
   );
 }

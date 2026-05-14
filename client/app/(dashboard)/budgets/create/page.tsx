@@ -41,7 +41,10 @@ export default function CreateBudgetPage() {
     }
   };
 
-  const handleCreateFromAnalysis = async () => {
+  const handleCreateFromAnalysis = async (
+    ruleType: "fifty_thirty_twenty" | "custom" | "manual_custom",
+    customPercentages?: { needs: number; wants: number; savings: number },
+  ) => {
     if (!analysis || !analysisInput) {
       return;
     }
@@ -56,7 +59,16 @@ export default function CreateBudgetPage() {
         analysis_id: analysis.analysis_id,
         income: analysisInput.income,
         confirmed: true,
+        rule_type: ruleType,
+        ...(ruleType === "manual_custom" && customPercentages
+          ? {
+              custom_needs_percentage: customPercentages.needs,
+              custom_wants_percentage: customPercentages.wants,
+              custom_savings_percentage: customPercentages.savings,
+            }
+          : {}),
       });
+
 
       // Auto-generate recommendations so the detail page has content immediately
       try {
@@ -106,6 +118,7 @@ export default function CreateBudgetPage() {
         ) : (
           <BudgetPreview
             analysis={analysis}
+            budgetStartDate={analysisInput?.budget_start_date ?? ""}
             onConfirm={handleCreateFromAnalysis}
             onBack={() => setAnalysis(null)}
             isLoading={isCreating}

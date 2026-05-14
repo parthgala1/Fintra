@@ -40,7 +40,13 @@ export function ImpactPanel({
 
   // Calculate metrics
   const savingsRate = report?.savings_rate ?? calculateSavingsRate(budget)
-  const investmentRate = 0 // TODO: Add investment tracking to BudgetReport
+  // Investments count as savings — show actual savings progress from the report
+  const actualSavings = report?.actual_savings ?? null
+  const budgetedSavings = report?.budgeted_savings ?? budget.savings_amount
+  const savingsProgress =
+    budgetedSavings > 0 && actualSavings !== null
+      ? (actualSavings / budgetedSavings) * 100
+      : null
   const needsRatio = budget.needs_percentage
   const wantsRatio = budget.wants_percentage
 
@@ -59,10 +65,28 @@ export function ImpactPanel({
           icon={TrendingUp as any}
         />
         <MetricCard
-          title="Investment Rate"
-          value={`${investmentRate.toFixed(1)}%`}
-          status={investmentRate >= 10 ? "good" : "neutral"}
-          description={investmentRate >= 10 ? "Healthy" : "Could improve"}
+          title="Savings (incl. Investments)"
+          value={
+            savingsProgress !== null
+              ? `${savingsProgress.toFixed(1)}%`
+              : `${budget.savings_percentage.toFixed(1)}%`
+          }
+          status={
+            savingsProgress !== null
+              ? savingsProgress >= 80
+                ? "good"
+                : savingsProgress >= 50
+                  ? "neutral"
+                  : "warning"
+              : budget.savings_percentage >= 20
+                ? "good"
+                : "neutral"
+          }
+          description={
+            savingsProgress !== null
+              ? `${formatINR(actualSavings!, 0)} of ${formatINR(budgetedSavings, 0)}`
+              : "Investments included"
+          }
           icon={Zap as any}
         />
         <MetricCard

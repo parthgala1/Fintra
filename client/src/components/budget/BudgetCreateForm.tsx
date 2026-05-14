@@ -73,7 +73,9 @@ export function BudgetCreateForm({
       </div>
 
       <div>
-        <label htmlFor="budget-start-date" className="mb-2 block text-sm text-slate-300">Budget Start Date</label>
+        <label htmlFor="budget-start-date" className="mb-2 block text-sm text-slate-300">
+          Budget Start Date
+        </label>
         <input
           id="budget-start-date"
           type="date"
@@ -81,6 +83,10 @@ export function BudgetCreateForm({
           onChange={(e) => setBudgetStartDate(e.target.value)}
           className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-white focus:border-green-500 focus:outline-none"
         />
+        <p className="mt-1.5 text-xs text-slate-500">
+          Transactions <span className="text-slate-400 font-medium">before</span> this date will be analyzed to understand your spending mix.
+          Transactions <span className="text-slate-400 font-medium">on or after</span> this date will be tracked against the new budget.
+        </p>
       </div>
 
       <div>
