@@ -16,6 +16,7 @@ import {
 import { useBudget } from "@/hooks/use-budgets";
 import { api, BudgetReport, Recommendation } from "@/lib/api";
 import { ImpactPanel } from "@/components/budget/ImpactPanel";
+import { BudgetStatusBanner } from "@/components/budget/BudgetStatusBanner";
 
 export default function BudgetDetailPage() {
   const params = useParams();
@@ -290,7 +291,10 @@ export default function BudgetDetailPage() {
             </div>
           </div>
 
-          {/* Impact Panel Section */}
+          {/* Status Banner - Shows overall budget health */}
+          <BudgetStatusBanner budget={budget} report={currentReport} />
+
+          {/* Impact Panel Section - 3 Key Metrics */}
           <div className="mb-8">
             <ImpactPanel
               budgetId={budgetId}
@@ -301,71 +305,6 @@ export default function BudgetDetailPage() {
               onGenerateRecommendations={handleGenerateRecommendations}
               isGenerating={isGeneratingRecs}
             />
-          </div>
-
-          {/* Current Period Report */}
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-sm mb-8">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">Current Period Overview</h2>
-              <Link
-                href={`/budgets/${budgetId}/reports`}
-                className="text-sm text-green-400 hover:text-green-300 transition-colors"
-              >
-                View Detailed Report
-              </Link>
-            </div>
-
-            {currentReport?.last_calculated_at && (
-              <p className="mb-4 text-xs text-slate-500">
-                Last calculated: {formatDate(currentReport.last_calculated_at)}
-              </p>
-            )}
-
-            {reportLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin text-green-500" />
-              </div>
-            ) : currentReport ? (
-              <div className="grid gap-6 md:grid-cols-3">
-                {/* Income */}
-                <div className="rounded-xl bg-white/5 p-4">
-                  <p className="text-sm text-slate-400">Total Income</p>
-                  <p className="text-xl font-bold text-green-400 mt-1">
-                    {formatAmount(currentReport.total_income)}
-                  </p>
-                </div>
-
-                {/* Expenses */}
-                <div className="rounded-xl bg-white/5 p-4">
-                  <p className="text-sm text-slate-400">Total Expenses</p>
-                  <p className="text-xl font-bold text-red-400 mt-1">
-                    {formatAmount(currentReport.total_expenses)}
-                  </p>
-                </div>
-
-                {/* Savings Rate */}
-                <div className="rounded-xl bg-white/5 p-4">
-                  <p className="text-sm text-slate-400">Savings Rate</p>
-                  <p className="text-xl font-bold text-white mt-1">
-                    {currentReport.savings_rate !== null &&
-                    currentReport.savings_rate !== undefined &&
-                    Number.isFinite(currentReport.savings_rate)
-                      ? `${currentReport.savings_rate.toFixed(1)}%`
-                      : "0%"}
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="text-center py-8 text-slate-400">
-                <p>No report data available for the current period.</p>
-                <Link
-                  href={`/budgets/${budgetId}/reports`}
-                  className="text-green-400 hover:text-green-300 mt-2 inline-block"
-                >
-                  Generate a report
-                </Link>
-              </div>
-            )}
           </div>
 
           {/* Quick Actions */}

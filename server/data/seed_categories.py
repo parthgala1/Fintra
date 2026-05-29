@@ -14,28 +14,56 @@ from models.category_mapping import CategoryMapping
 
 logger = logging.getLogger(__name__)
 
-# System categories to create
+# System categories to create.
+# "Uncategorized" has been replaced with per-bucket Misc fallback categories.
+# "Bank Transfer" and "Credit Card Payment" are kept as inactive; new code uses
+# direction_type='transfer' on the transaction directly.
 SYSTEM_CATEGORIES = [
+    # ── Misc fallback categories (is_misc_category=True) ──────────────────────
     {
-        "name": "Uncategorized",
+        "name": "Misc Needs",
         "category_type": CategoryType.NEEDS,
         "icon": "question-circle",
-        "color": "#808080",
-        "description": "Transactions that need manual categorization",
+        "color": "#6b7280",
+        "description": "Needs expense — bucket known, specific category uncertain",
+        "bucket_type": "needs",
+        "is_misc_category": True,
     },
+    {
+        "name": "Misc Wants",
+        "category_type": CategoryType.WANTS,
+        "icon": "question-circle",
+        "color": "#6b7280",
+        "description": "Wants expense — bucket known, specific category uncertain",
+        "bucket_type": "wants",
+        "is_misc_category": True,
+    },
+    {
+        "name": "Misc Savings",
+        "category_type": CategoryType.SAVINGS,
+        "icon": "question-circle",
+        "color": "#6b7280",
+        "description": "Savings transaction — bucket known, specific category uncertain",
+        "bucket_type": "savings",
+        "is_misc_category": True,
+    },
+    # ── Income ────────────────────────────────────────────────────────────────
     {
         "name": "Salary",
         "category_type": CategoryType.INCOME,
         "icon": "briefcase",
         "color": "#28a745",
         "description": "Income from employment",
+        "bucket_type": "none",
     },
+    # ── Needs ─────────────────────────────────────────────────────────────────
     {
         "name": "Rent",
         "category_type": CategoryType.NEEDS,
         "icon": "home",
         "color": "#17a2b8",
         "description": "Rent and housing payments",
+        "bucket_type": "needs",
     },
     {
         "name": "Groceries",
@@ -43,6 +71,7 @@ SYSTEM_CATEGORIES = [
         "icon": "cart",
         "color": "#ffc107",
         "description": "Grocery shopping",
+        "bucket_type": "needs",
     },
     {
         "name": "Utilities",
@@ -50,6 +79,7 @@ SYSTEM_CATEGORIES = [
         "icon": "lightning",
         "color": "#007bff",
         "description": "Electricity, water, gas, internet",
+        "bucket_type": "needs",
     },
     {
         "name": "Transportation",
@@ -57,6 +87,7 @@ SYSTEM_CATEGORIES = [
         "icon": "car",
         "color": "#6c757d",
         "description": "Fuel, public transport, taxi",
+        "bucket_type": "needs",
     },
     {
         "name": "Healthcare",
@@ -64,13 +95,16 @@ SYSTEM_CATEGORIES = [
         "icon": "heart",
         "color": "#dc3545",
         "description": "Medical expenses, insurance",
+        "bucket_type": "needs",
     },
+    # ── Wants ─────────────────────────────────────────────────────────────────
     {
         "name": "Dining Out",
         "category_type": CategoryType.WANTS,
         "icon": "utensils",
         "color": "#e83e8c",
         "description": "Restaurants, cafes, delivery",
+        "bucket_type": "wants",
     },
     {
         "name": "Entertainment",
@@ -78,6 +112,7 @@ SYSTEM_CATEGORIES = [
         "icon": "film",
         "color": "#6610f2",
         "description": "Movies, games, streaming",
+        "bucket_type": "wants",
     },
     {
         "name": "Shopping",
@@ -85,6 +120,7 @@ SYSTEM_CATEGORIES = [
         "icon": "shopping-bag",
         "color": "#fd7e14",
         "description": "Clothing, accessories, electronics",
+        "bucket_type": "wants",
     },
     {
         "name": "Travel",
@@ -92,13 +128,16 @@ SYSTEM_CATEGORIES = [
         "icon": "plane",
         "color": "#20c997",
         "description": "Vacation, hotels, flights",
+        "bucket_type": "wants",
     },
+    # ── Savings ───────────────────────────────────────────────────────────────
     {
         "name": "Investments",
         "category_type": CategoryType.SAVINGS,
         "icon": "chart-line",
         "color": "#007bff",
         "description": "Stocks, mutual funds, FD",
+        "bucket_type": "savings",
     },
     {
         "name": "Savings",
@@ -106,13 +145,17 @@ SYSTEM_CATEGORIES = [
         "icon": "piggy-bank",
         "color": "#28a745",
         "description": "Savings account deposits",
+        "bucket_type": "savings",
     },
+    # ── Transfer (inactive — direction_type='transfer' used instead) ──────────
     {
         "name": "Bank Transfer",
         "category_type": CategoryType.TRANSFER,
         "icon": "exchange-alt",
         "color": "#6c757d",
         "description": "Transfers between accounts",
+        "bucket_type": "none",
+        "is_active_override": False,  # Mark inactive on create
     },
     {
         "name": "Credit Card Payment",
@@ -120,6 +163,8 @@ SYSTEM_CATEGORIES = [
         "icon": "credit-card",
         "color": "#17a2b8",
         "description": "Credit card bill payments",
+        "bucket_type": "none",
+        "is_active_override": False,
     },
 ]
 
@@ -137,10 +182,14 @@ def create_system_categories(db: Session) -> list[Category]:
     categories = []
     
     for cat_data in SYSTEM_CATEGORIES:
+        # Pop non-model keys before constructing the ORM object
+        cat_kwargs = {k: v for k, v in cat_data.items() if k != "is_active_override"}
+        is_active = cat_data.get("is_active_override", True)
+
         # Check if category already exists
         existing = (
             db.query(Category)
-            .filter(Category.name == cat_data["name"], Category.is_system == True)  # noqa: E712
+            .filter(Category.name == cat_kwargs["name"], Category.is_system == True)  # noqa: E712
             .first()
         )
         
@@ -148,17 +197,27 @@ def create_system_categories(db: Session) -> list[Category]:
             category = Category(
                 user_id=None,  # System categories don't belong to a user
                 is_system=True,
-                is_active=True,  # Explicitly set to active
-                **cat_data,
+                is_active=is_active,
+                **cat_kwargs,
             )
             db.add(category)
             categories.append(category)
-            logger.info(f"Created system category: {cat_data['name']}")
+            logger.info(f"Created system category: {cat_kwargs['name']}")
+        else:
+            # Update is_active for transfer categories that should be inactive
+            desired_active = cat_data.get("is_active_override", True)
+            if existing.is_active != desired_active and not desired_active:
+                existing.is_active = False
+                logger.info(f"Deactivated legacy system category: {existing.name}")
+            # Update bucket_type and is_misc_category if not already set
+            if existing.bucket_type is None and cat_kwargs.get("bucket_type"):
+                existing.bucket_type = cat_kwargs["bucket_type"]
+            if not existing.is_misc_category and cat_kwargs.get("is_misc_category"):
+                existing.is_misc_category = True
     
-    if categories:
-        db.commit()
-        for cat in categories:
-            db.refresh(cat)
+    db.commit()
+    for cat in categories:
+        db.refresh(cat)
     
     return categories
 
@@ -167,7 +226,9 @@ def seed_default_categories(db: Session, user_id: UUID) -> list[Category]:
     """
     Seed default categories for a new user.
     
-    Creates a copy of system categories for the user.
+    Creates a copy of active system categories for the user.
+    Inactive system categories (e.g., Bank Transfer, Credit Card Payment) are skipped —
+    transfers are tracked via direction_type on transactions, not via categories.
     
     Args:
         db: Database session
@@ -176,10 +237,13 @@ def seed_default_categories(db: Session, user_id: UUID) -> list[Category]:
     Returns:
         List of created categories
     """
-    # Get system categories
+    # Get active system categories only
     system_categories = (
         db.query(Category)
-        .filter(Category.is_system == True)  # noqa: E712
+        .filter(
+            Category.is_system == True,  # noqa: E712
+            Category.is_active == True,  # noqa: E712
+        )
         .all()
     )
     
@@ -205,6 +269,8 @@ def seed_default_categories(db: Session, user_id: UUID) -> list[Category]:
                 icon=sys_cat.icon,
                 color=sys_cat.color,
                 description=sys_cat.description,
+                bucket_type=sys_cat.bucket_type,
+                is_misc_category=sys_cat.is_misc_category if sys_cat.is_misc_category else False,
                 is_system=False,
             )
             db.add(category)

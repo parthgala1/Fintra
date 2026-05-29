@@ -5,13 +5,15 @@ Provides CRUD endpoints for budgets, including
 default budget management.
 """
 
+import csv
 import logging
-from datetime import datetime, time, timedelta
+from io import StringIO
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Optional
-from uuid import UUID
+from typing import Any, Dict, List, Optional
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -26,6 +28,7 @@ from models.user import User
 from schemas.budget_analysis import (
     BudgetAnalysisRequest,
     BudgetAnalysisResponse,
+    BudgetCreateFromHistoryRequest,
     BudgetCreateWithAnalysisRequest,
     BudgetHistoryAnalysisResponse,
 )
@@ -95,17 +98,165 @@ def _initialize_budget_allocations(db: Session, user_id: UUID, budget: Budget) -
     for category_type, typed_categories in grouped.items():
         if not typed_categories:
             continue
-        each_amount = (budgets_by_type[category_type] / Decimal(len(typed_categories))).quantize(Decimal("0.01"))
+        non_misc = [c for c in typed_categories if not getattr(c, "is_misc_category", False)]
+        misc_cats = [c for c in typed_categories if getattr(c, "is_misc_category", False)]
+        each_amount = (
+            (budgets_by_type[category_type] / Decimal(len(non_misc))).quantize(Decimal("0.01"))
+            if non_misc else Decimal("0.00")
+        )
         for idx, category in enumerate(typed_categories):
+            is_misc = category in misc_cats
             db.add(
                 BudgetCategory(
                     budget_id=budget.id,
                     category_id=category.id,
                     category_type=category_type,
-                    budgeted_amount=each_amount,
+                    budgeted_amount=Decimal("0.00") if is_misc else each_amount,
                     sort_order=idx,
                 )
             )
+
+
+def _resolve_percentages_from_rule(analysis: BudgetHistoryAnalysis, request_data: Any):
+    needs_percentage = Decimal(str(analysis.needs_percentage)).quantize(Decimal("0.01"))
+    wants_percentage = Decimal(str(analysis.wants_percentage)).quantize(Decimal("0.01"))
+    savings_percentage = (Decimal("100.00") - needs_percentage - wants_percentage).quantize(Decimal("0.01"))
+
+    rule_type = getattr(request_data, "rule_type", "custom")
+    if rule_type == "fifty_thirty_twenty":
+        chosen_budget_type = BudgetType.FIFTY_THIRTY_TWENTY
+        needs_percentage = Decimal("50.00")
+        wants_percentage = Decimal("30.00")
+        savings_percentage = Decimal("20.00")
+    elif rule_type == "manual_custom":
+        chosen_budget_type = BudgetType.CUSTOM
+        needs_percentage = Decimal(str(request_data.custom_needs_percentage)).quantize(Decimal("0.01"))
+        wants_percentage = Decimal(str(request_data.custom_wants_percentage)).quantize(Decimal("0.01"))
+        savings_percentage = (Decimal("100.00") - needs_percentage - wants_percentage).quantize(Decimal("0.01"))
+    else:
+        chosen_budget_type = BudgetType.CUSTOM
+
+    return chosen_budget_type, needs_percentage, wants_percentage, savings_percentage
+
+
+def _create_budget_from_analysis_snapshot(
+    db: Session,
+    current_user: User,
+    analysis: BudgetHistoryAnalysis,
+    request_data: Any,
+) -> Budget:
+    chosen_budget_type, needs_percentage, wants_percentage, savings_percentage = _resolve_percentages_from_rule(
+        analysis, request_data
+    )
+
+    total_budget = (
+        Decimal(str(request_data.income)).quantize(Decimal("0.01"))
+        if request_data.income is not None
+        else Decimal(str(analysis.total_spending)).quantize(Decimal("0.01"))
+    )
+
+    amounts = BudgetCalculator.calculate_amounts(
+        total_budget=total_budget,
+        needs_percentage=needs_percentage,
+        wants_percentage=wants_percentage,
+        savings_percentage=savings_percentage,
+        budget_type=chosen_budget_type,
+    )
+
+    start_dt = datetime.combine(request_data.budget_start_date, time.min)
+    next_month = (start_dt.replace(day=28) + timedelta(days=4)).replace(day=1)
+    end_dt = next_month - timedelta(days=1)
+
+    budget = Budget(
+        user_id=current_user.id,
+        name=request_data.name,
+        budget_type=chosen_budget_type,
+        period=BudgetPeriod.MONTHLY,
+        total_budget=total_budget,
+        needs_percentage=needs_percentage,
+        wants_percentage=wants_percentage,
+        savings_percentage=savings_percentage,
+        needs_amount=amounts["needs_amount"],
+        wants_amount=amounts["wants_amount"],
+        savings_amount=amounts["savings_amount"],
+        start_date=start_dt,
+        end_date=end_dt,
+        is_active=True,
+        is_default=False,
+    )
+
+    db.add(budget)
+    db.commit()
+    db.refresh(budget)
+
+    _initialize_budget_allocations(db, current_user.id, budget)
+    db.commit()
+
+    return budget
+
+
+def _flatten_category_breakdown_rows(category_breakdown: Dict[str, Any]) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for category_type, categories in (category_breakdown or {}).items():
+        if not isinstance(categories, dict):
+            continue
+        for category_name, payload in categories.items():
+            if not isinstance(payload, dict):
+                continue
+            rows.append(
+                {
+                    "category_type": category_type,
+                    "category_name": category_name,
+                    "amount": Decimal(str(payload.get("amount", 0))).quantize(Decimal("0.01")),
+                    "percentage": Decimal(str(payload.get("percentage", 0))).quantize(Decimal("0.01")),
+                    "transaction_count": int(payload.get("transaction_count") or 0),
+                }
+            )
+    rows.sort(key=lambda item: (item["category_type"], item["category_name"]))
+    return rows
+
+
+def _build_history_analysis_csv(budget: Budget, analysis: BudgetHistoryAnalysis) -> str:
+    output = StringIO()
+    writer = csv.writer(output)
+
+    writer.writerow(["Budget Name", budget.name])
+    writer.writerow(["Analysis Start", analysis.analysis_start_date.isoformat()])
+    writer.writerow(["Analysis End", analysis.analysis_end_date.isoformat()])
+    writer.writerow(["Total Transactions", int(analysis.total_transactions or 0)])
+    writer.writerow(["Data Quality", analysis.data_quality])
+    writer.writerow([])
+
+    writer.writerow([
+        "Category Type",
+        "Category Name",
+        "Amount",
+        "Actual Percentage",
+        "Transaction Count",
+    ])
+
+    for row in _flatten_category_breakdown_rows(analysis.category_breakdown or {}):
+        writer.writerow(
+            [
+                row["category_type"],
+                row["category_name"],
+                f"{row['amount']:.2f}",
+                f"{row['percentage']:.2f}",
+                row["transaction_count"],
+            ]
+        )
+
+    writer.writerow([])
+    writer.writerow(["Totals"])
+    writer.writerow(["Total Spending", f"{Decimal(str(analysis.total_spending)):.2f}"])
+    writer.writerow(["Needs Total", f"{Decimal(str(analysis.needs_total)):.2f}"])
+    writer.writerow(["Wants Total", f"{Decimal(str(analysis.wants_total)):.2f}"])
+    writer.writerow(["Savings Total", f"{Decimal(str(analysis.savings_total)):.2f}"])
+    writer.writerow(["Needs %", f"{Decimal(str(analysis.needs_percentage)):.2f}"])
+    writer.writerow(["Wants %", f"{Decimal(str(analysis.wants_percentage)):.2f}"])
+    writer.writerow(["Savings %", f"{Decimal(str(analysis.savings_percentage)):.2f}"])
+
+    return output.getvalue()
 
 
 @router.get("", response_model=BudgetListResponse)
@@ -329,78 +480,7 @@ def create_budget(
                 detail="Analysis already used to create a budget",
             )
 
-        needs_percentage = Decimal(str(analysis.needs_percentage)).quantize(Decimal("0.01"))
-        wants_percentage = Decimal(str(analysis.wants_percentage)).quantize(Decimal("0.01"))
-        savings_percentage = (Decimal("100.00") - needs_percentage - wants_percentage).quantize(Decimal("0.01"))
-
-        # Determine allocations based on rule type selected by the user
-        rule_type = getattr(budget_data, "rule_type", "custom")
-        if rule_type == "fifty_thirty_twenty":
-            chosen_budget_type = BudgetType.FIFTY_THIRTY_TWENTY
-            needs_percentage = Decimal("50.00")
-            wants_percentage = Decimal("30.00")
-            savings_percentage = Decimal("20.00")
-            logger.info(
-                f"[BudgetCreate] User chose 50/30/20 rule for budget '{budget_data.name}'"
-            )
-        elif rule_type == "manual_custom":
-            chosen_budget_type = BudgetType.CUSTOM
-            needs_percentage = Decimal(str(budget_data.custom_needs_percentage)).quantize(Decimal("0.01"))
-            wants_percentage = Decimal(str(budget_data.custom_wants_percentage)).quantize(Decimal("0.01"))
-            savings_percentage = (Decimal("100.00") - needs_percentage - wants_percentage).quantize(Decimal("0.01"))
-            logger.info(
-                f"[BudgetCreate] User chose manual custom rule for budget '{budget_data.name}' "
-                f"with N={needs_percentage}% W={wants_percentage}% S={savings_percentage}%"
-            )
-        else:
-            chosen_budget_type = BudgetType.CUSTOM
-            logger.info(
-                f"[BudgetCreate] User chose custom (historical) rule for budget '{budget_data.name}' "
-                f"with N={needs_percentage}% W={wants_percentage}% S={savings_percentage}%"
-            )
-
-        total_budget = (
-            Decimal(str(budget_data.income)).quantize(Decimal("0.01"))
-            if budget_data.income is not None
-            else Decimal(str(analysis.total_spending)).quantize(Decimal("0.01"))
-        )
-
-        amounts = BudgetCalculator.calculate_amounts(
-            total_budget=total_budget,
-            needs_percentage=needs_percentage,
-            wants_percentage=wants_percentage,
-            savings_percentage=savings_percentage,
-            budget_type=chosen_budget_type,
-        )
-
-        start_dt = datetime.combine(budget_data.budget_start_date, time.min)
-        next_month = (start_dt.replace(day=28) + timedelta(days=4)).replace(day=1)
-        end_dt = next_month - timedelta(days=1)
-
-        budget = Budget(
-            user_id=current_user.id,
-            name=budget_data.name,
-            budget_type=chosen_budget_type,
-            period=BudgetPeriod.MONTHLY,
-            total_budget=total_budget,
-            needs_percentage=needs_percentage,
-            wants_percentage=wants_percentage,
-            savings_percentage=savings_percentage,
-            needs_amount=amounts["needs_amount"],
-            wants_amount=amounts["wants_amount"],
-            savings_amount=amounts["savings_amount"],
-            start_date=start_dt,
-            end_date=end_dt,
-            is_active=True,
-            is_default=False,
-        )
-
-        db.add(budget)
-        db.commit()
-        db.refresh(budget)
-
-        _initialize_budget_allocations(db, current_user.id, budget)
-        db.commit()
+        budget = _create_budget_from_analysis_snapshot(db, current_user, analysis, budget_data)
 
         BudgetAnalysisService.link_analysis_to_budget(db, analysis, budget.id)
 
@@ -502,10 +582,125 @@ def create_budget(
 @router.get("/{budget_id}/history-analysis", response_model=BudgetHistoryAnalysisResponse)
 def get_budget_history_analysis(
     budget_id: UUID,
+    analysis_start_date: date | None = Query(None),
+    analysis_end_date: date | None = Query(None),
     current_user: User = Depends(get_current_user_dep),
     db: Session = Depends(get_db),
 ):
     """Get historical spending breakdown for a budget."""
+    budget = (
+        db.query(Budget)
+        .filter(Budget.id == budget_id, Budget.user_id == current_user.id)
+        .first()
+    )
+
+    if not budget:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Budget not found",
+        )
+
+    if (analysis_start_date is None) != (analysis_end_date is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide both analysis_start_date and analysis_end_date together.",
+        )
+
+    if analysis_start_date and analysis_end_date and analysis_start_date > analysis_end_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="analysis_start_date must be on or before analysis_end_date.",
+        )
+
+    if analysis_end_date and analysis_end_date >= budget.start_date.date():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="analysis_end_date must be before the budget start date.",
+        )
+
+    if analysis_start_date and analysis_end_date:
+        try:
+            analysis_data = BudgetAnalysisService.analyze_spending_for_range(
+                db=db,
+                user_id=current_user.id,
+                analysis_start_date=analysis_start_date,
+                analysis_end_date=analysis_end_date,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+        return BudgetHistoryAnalysisResponse(
+            analysis_id=uuid4(),
+            budget_id=budget.id,
+            budget_name=budget.name,
+            analysis_start_date=analysis_data["analysis_start_date"],
+            analysis_end_date=analysis_data["analysis_end_date"],
+            total_spending=analysis_data["total_spending"],
+            needs_total=analysis_data["needs_total"],
+            wants_total=analysis_data["wants_total"],
+            savings_total=analysis_data["savings_total"],
+            needs_percentage=analysis_data["needs_percentage"],
+            wants_percentage=analysis_data["wants_percentage"],
+            savings_percentage=analysis_data["savings_percentage"],
+            category_breakdown=analysis_data["category_breakdown"],
+            total_transactions=analysis_data["total_transactions"],
+            data_quality=analysis_data["data_quality"],
+            validation_warnings=analysis_data["validation_warnings"],
+        )
+
+    analysis = (
+        db.query(BudgetHistoryAnalysis)
+        .filter(
+            BudgetHistoryAnalysis.budget_id == budget_id,
+            BudgetHistoryAnalysis.user_id == current_user.id,
+        )
+        .order_by(BudgetHistoryAnalysis.created_at.desc())
+        .first()
+    )
+
+    if not analysis:
+        try:
+            analysis_data = BudgetAnalysisService.analyze_spending(
+                db=db,
+                user_id=current_user.id,
+                budget_start_date=budget.start_date.date(),
+            )
+            analysis = BudgetAnalysisService.store_analysis(
+                db=db,
+                user_id=current_user.id,
+                budget_id=budget.id,
+                analysis_data=analysis_data,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    return BudgetHistoryAnalysisResponse(
+        analysis_id=analysis.id,
+        budget_id=budget.id,
+        budget_name=budget.name,
+        analysis_start_date=analysis.analysis_start_date,
+        analysis_end_date=analysis.analysis_end_date,
+        total_spending=analysis.total_spending,
+        needs_total=analysis.needs_total,
+        wants_total=analysis.wants_total,
+        savings_total=analysis.savings_total,
+        needs_percentage=analysis.needs_percentage,
+        wants_percentage=analysis.wants_percentage,
+        savings_percentage=analysis.savings_percentage,
+        category_breakdown=analysis.category_breakdown,
+        total_transactions=int(analysis.total_transactions or 0),
+        data_quality=analysis.data_quality,
+        validation_warnings=analysis.validation_warnings or [],
+    )
+
+
+@router.get("/{budget_id}/history-analysis/export.csv")
+def export_budget_history_analysis_csv(
+    budget_id: UUID,
+    current_user: User = Depends(get_current_user_dep),
+    db: Session = Depends(get_db),
+):
+    """Download the latest historical analysis as CSV."""
     budget = (
         db.query(Budget)
         .filter(Budget.id == budget_id, Budget.user_id == current_user.id)
@@ -534,21 +729,85 @@ def get_budget_history_analysis(
             detail="Historical analysis not found for this budget",
         )
 
-    return BudgetHistoryAnalysisResponse(
-        analysis_start_date=analysis.analysis_start_date,
-        analysis_end_date=analysis.analysis_end_date,
-        total_spending=analysis.total_spending,
-        needs_total=analysis.needs_total,
-        wants_total=analysis.wants_total,
-        savings_total=analysis.savings_total,
-        needs_percentage=analysis.needs_percentage,
-        wants_percentage=analysis.wants_percentage,
-        savings_percentage=analysis.savings_percentage,
-        category_breakdown=analysis.category_breakdown,
-        total_transactions=int(analysis.total_transactions or 0),
-        data_quality=analysis.data_quality,
-        validation_warnings=analysis.validation_warnings or [],
+    csv_content = _build_history_analysis_csv(budget, analysis)
+    safe_name = "".join(char if char.isalnum() else "_" for char in budget.name).strip("_")
+    filename = f"{safe_name or 'budget'}_historical_analysis.csv"
+
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.post("/{budget_id}/history-analysis/create-budget", response_model=BudgetResponse, status_code=status.HTTP_201_CREATED)
+def create_budget_from_history_analysis(
+    budget_id: UUID,
+    payload: BudgetCreateFromHistoryRequest,
+    current_user: User = Depends(get_current_user_dep),
+    db: Session = Depends(get_db),
+):
+    """Create a new monthly budget using the historical analysis tied to an existing budget."""
+    source_budget = (
+        db.query(Budget)
+        .filter(Budget.id == budget_id, Budget.user_id == current_user.id)
+        .first()
+    )
+
+    if not source_budget:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Budget not found",
+        )
+
+    analysis = (
+        db.query(BudgetHistoryAnalysis)
+        .filter(
+            BudgetHistoryAnalysis.budget_id == budget_id,
+            BudgetHistoryAnalysis.user_id == current_user.id,
+        )
+        .order_by(BudgetHistoryAnalysis.created_at.desc())
+        .first()
+    )
+
+    if not analysis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Historical analysis not found for this budget",
+        )
+
+    new_budget = _create_budget_from_analysis_snapshot(db, current_user, analysis, payload)
+
+    cloned_analysis = BudgetAnalysisService.store_analysis(
+        db=db,
+        user_id=current_user.id,
+        budget_id=new_budget.id,
+        analysis_data={
+            "analysis_start_date": analysis.analysis_start_date,
+            "analysis_end_date": analysis.analysis_end_date,
+            "total_spending": float(analysis.total_spending),
+            "needs_total": float(analysis.needs_total),
+            "wants_total": float(analysis.wants_total),
+            "savings_total": float(analysis.savings_total),
+            "needs_percentage": float(analysis.needs_percentage),
+            "wants_percentage": float(analysis.wants_percentage),
+            "savings_percentage": float(analysis.savings_percentage),
+            "category_breakdown": analysis.category_breakdown or {},
+            "total_transactions": int(analysis.total_transactions or 0),
+            "data_quality": analysis.data_quality,
+            "validation_warnings": analysis.validation_warnings or [],
+        },
+    )
+    BudgetAnalysisService.link_analysis_to_budget(db, cloned_analysis, new_budget.id)
+
+    logger.info(
+        "[BudgetCreate] Created new budget %s from historical analysis %s of budget %s",
+        new_budget.id,
+        analysis.id,
+        budget_id,
+    )
+
+    return new_budget
 
 
 @router.patch("/{budget_id}", response_model=BudgetResponse)

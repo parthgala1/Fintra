@@ -1,4 +1,14 @@
 import { useState, useCallback, useRef, useEffect } from "react"
+import {
+  ScenarioEvent,
+  ScenarioSnapshot,
+  ScenarioComparison,
+  FeasibilityScore,
+  CreateScenarioEventData,
+  UpdateScenarioEventData,
+  ApiError,
+} from "@/lib/api";
+import { api } from "@/lib/api";
 
 interface UseScenarioSimulationParams {
   budgetId: string
@@ -108,4 +118,213 @@ export function useScenarioSimulation({
     simulation,
     isSimulating
   }
+}
+
+
+// Event Management Hook
+export function useScenarioEvents(scenarioId: string) {
+  const [events, setEvents] = useState<ScenarioEvent[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadEvents = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.listScenarioEvents(scenarioId);
+      setEvents(data);
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : "Failed to load scenario events";
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  }, [scenarioId]);
+
+  const createEvent = useCallback(
+    async (data: CreateScenarioEventData): Promise<ScenarioEvent | null> => {
+      setLoading(true);
+      setError(null);
+      try {
+        const newEvent = await api.createScenarioEvent(scenarioId, data);
+        setEvents([...events, newEvent]);
+        return newEvent;
+      } catch (err) {
+        const message =
+          err instanceof ApiError
+            ? err.message
+            : "Failed to create event";
+        setError(message);
+        return null;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [scenarioId, events],
+  );
+
+  const updateEvent = useCallback(
+    async (
+      eventId: string,
+      data: UpdateScenarioEventData,
+    ): Promise<ScenarioEvent | null> => {
+      setLoading(true);
+      setError(null);
+      try {
+        const updated = await api.updateScenarioEvent(scenarioId, eventId, data);
+        setEvents(events.map((e) => (e.id === eventId ? updated : e)));
+        return updated;
+      } catch (err) {
+        const message =
+          err instanceof ApiError
+            ? err.message
+            : "Failed to update event";
+        setError(message);
+        return null;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [scenarioId, events],
+  );
+
+  const deleteEvent = useCallback(
+    async (eventId: string): Promise<boolean> => {
+      setLoading(true);
+      setError(null);
+      try {
+        await api.deleteScenarioEvent(scenarioId, eventId);
+        setEvents(events.filter((e) => e.id !== eventId));
+        return true;
+      } catch (err) {
+        const message =
+          err instanceof ApiError
+            ? err.message
+            : "Failed to delete event";
+        setError(message);
+        return false;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [scenarioId, events],
+  );
+
+  return {
+    events,
+    loading,
+    error,
+    loadEvents,
+    createEvent,
+    updateEvent,
+    deleteEvent,
+  };
+}
+
+
+// Simulation Hook
+export function useEventDrivenScenarioSimulation() {
+  const [snapshots, setSnapshots] = useState<ScenarioSnapshot[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const simulate = useCallback(async (scenarioId: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.simulateScenario(scenarioId);
+      setSnapshots(data);
+      return data;
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : "Failed to simulate scenario";
+      setError(message);
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  return {
+    snapshots,
+    loading,
+    error,
+    simulate,
+  };
+}
+
+
+// Comparison Hook
+export function useScenarioComparison() {
+  const [comparison, setComparison] = useState<ScenarioComparison | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const compare = useCallback(
+    async (scenarioId: string, comparisonIds: string[]) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await api.compareScenarios(scenarioId, comparisonIds);
+        setComparison(data);
+        return data;
+      } catch (err) {
+        const message =
+          err instanceof ApiError
+            ? err.message
+            : "Failed to compare scenarios";
+        setError(message);
+        return null;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
+
+  return {
+    comparison,
+    loading,
+    error,
+    compare,
+  };
+}
+
+
+// Feasibility Hook
+export function useFeasibilityScore() {
+  const [feasibility, setFeasibility] = useState<FeasibilityScore | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const compute = useCallback(async (scenarioId: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.computeFeasibility(scenarioId);
+      setFeasibility(data);
+      return data;
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : "Failed to compute feasibility";
+      setError(message);
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  return {
+    feasibility,
+    loading,
+    error,
+    compute,
+  };
 }

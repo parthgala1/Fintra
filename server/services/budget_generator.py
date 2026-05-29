@@ -14,7 +14,7 @@ from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from models.category import Category, CategoryType
-from models.transaction import Transaction, TransactionType
+from models.transaction import Transaction, TransactionType, DirectionType
 
 
 class BudgetGenerator:
@@ -191,6 +191,7 @@ class BudgetGenerator:
                 and_(
                     Transaction.user_id == user_id,
                     Transaction.transaction_type == TransactionType.EXPENSE,
+                    Transaction.direction_type != DirectionType.TRANSFER,
                     Category.category_type == category_type,
                     Transaction.transaction_date >= start_date,
                     Transaction.transaction_date <= end_date,
@@ -230,6 +231,7 @@ class BudgetGenerator:
                 and_(
                     Transaction.user_id == user_id,
                     Transaction.transaction_type == TransactionType.EXPENSE,
+                    Transaction.direction_type != DirectionType.TRANSFER,
                     Transaction.transaction_date >= start_date,
                     Transaction.transaction_date <= end_date,
                 )

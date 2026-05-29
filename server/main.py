@@ -15,6 +15,7 @@ from routers.budget import router as budget_router
 from routers.budget_category import router as budget_category_router
 from routers.budget_report import router as budget_report_router
 from routers.budget_scenario import router as budget_scenario_router
+from routers.scenario_event import router as scenario_event_router
 from routers.budget_alert import router as budget_alert_router
 from routers.goal import router as goal_router
 from routers.recommendation import router as recommendation_router
@@ -97,6 +98,7 @@ app.include_router(budget_router, prefix="/api")
 app.include_router(budget_category_router, prefix="/api")
 app.include_router(budget_report_router, prefix="/api")
 app.include_router(budget_scenario_router, prefix="/api")
+app.include_router(scenario_event_router)
 
 # Include goal router
 app.include_router(goal_router, prefix="/api")

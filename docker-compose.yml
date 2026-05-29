@@ -3,6 +3,7 @@ services:
     build: 
       context: ./client
       dockerfile: Dockerfile
+    command: sh -c "npm ci && npm run dev -- --hostname 0.0.0.0 --port 3000"
     volumes:
       - ./client:/app
       - /app/node_modules

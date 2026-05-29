@@ -36,7 +36,7 @@ from services.bank_account_detector import (
     extract_statement_date,
 )
 from services.reconciliation_service import reconcile_account_balance
-from services.classification_engine import classify_transaction, batch_ai_classification
+from services.classification_engine import classify_transaction_hierarchical, batch_ai_classification
 from services.file_parser import detect_file_type, parse_file
 from services.transaction_normalizer import (
     generate_transaction_hash,
@@ -409,13 +409,15 @@ async def process_upload(
                     category_id = batch_classifications[str(batch_index)]
                     logger.debug(f"Using batch classification for transaction {tx_index}")
             
-            # Fall back to individual classification if no batch result
+            # Fall back to individual hierarchical classification if no batch result
+            classification = None
             if not category_id:
-                category_id = classify_transaction(
+                classification = classify_transaction_hierarchical(
                     db=db,
                     transaction=normalized,
                     user_id=current_user.id,
                 )
+                category_id = classification["category_id"]
             
             # Create transaction
             transaction = Transaction(
@@ -430,6 +432,33 @@ async def process_upload(
                 status=TransactionStatus.POSTED,
                 transaction_date=normalized["transaction_date"],
                 posted_date=normalized.get("posted_date"),
+                # Hierarchical classification metadata
+                direction_type=(
+                    classification["direction_type"]
+                    if classification
+                    else normalized.get("direction_type")
+                ),
+                bucket_type=(
+                    classification.get("bucket_type", "none")
+                    if classification
+                    else normalized.get("bucket_type", "none")
+                ),
+                confidence_score=(
+                    classification.get("confidence_score")
+                    if classification
+                    else None
+                ),
+                classification_source=(
+                    classification.get("classification_source")
+                    if classification
+                    else None
+                ),
+                needs_review=(
+                    classification.get("needs_review", False)
+                    if classification
+                    else normalized.get("needs_review", False)
+                ),
+                user_verified=False,
             )
             
             db.add(transaction)

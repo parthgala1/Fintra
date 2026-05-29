@@ -15,11 +15,16 @@ import {
   Pencil,
   Trash2,
   Save,
-  X
+  X,
+  BarChart2,
+  FileText,
+  TrendingUp,
+  TrendingDown,
+  Minus
 } from "lucide-react"
 import { useTransactions, useTransaction } from "@/hooks/use-transactions"
 import { useCategories } from "@/hooks/use-categories"
-import { Transaction, TransactionParams, UpdateTransactionData, Category } from "@/lib/api"
+import { api, Transaction, TransactionParams, UpdateTransactionData, Category, TransactionAnalysis, Upload } from "@/lib/api"
 
 export default function TransactionsPage() {
   const searchParams = useSearchParams()
@@ -29,6 +34,7 @@ export default function TransactionsPage() {
   const initialType = searchParams.get("type")
   const parsedPage = Number(searchParams.get("page") || "1")
   const parsedPageSize = Number(searchParams.get("pageSize") || "50")
+  const focusTxFromParams = searchParams.get("focusTx")
 
   const [searchTerm, setSearchTerm] = useState(searchParams.get("search") || "")
   const [selectedType, setSelectedType] = useState<"all" | "income" | "expense">(
@@ -46,6 +52,10 @@ export default function TransactionsPage() {
   const [currentPageSize, setCurrentPageSize] = useState(
     parsedPageSize === 25 || parsedPageSize === 50 || parsedPageSize === 100 ? parsedPageSize : 50
   )
+  const [focusTx, setFocusTx] = useState<string | null>(focusTxFromParams)
+  const [focusedTxFound, setFocusedTxFound] = useState(false)
+  const [focusedOnce, setFocusedOnce] = useState(false)
+  const [isLocatingFocusTx, setIsLocatingFocusTx] = useState(false)
 
   const { 
     transactions, 
@@ -114,7 +124,80 @@ export default function TransactionsPage() {
     currentPageSize,
     fetchTransactions,
   ])
+  // Handle deep-link focus: if focusTx is provided and not in current page, locate it
+  useEffect(() => {
+    if (!focusTx || focusedOnce) return // Only run once per focusTx value
+    
+    // Check if focus transaction is in current loaded transactions
+    const foundInCurrent = transactions.some(tx => tx.id === focusTx)
+    if (foundInCurrent) {
+      setFocusedTxFound(true)
+      setFocusedOnce(true)
+      return
+    }
 
+    // If not found and we have pagination info, search for it
+    if (!focusedTxFound && totalPages > 1 && !isLocatingFocusTx) {
+      setIsLocatingFocusTx(true)
+      
+      // Bounded search: check up to 10 pages (configurable limit)
+      const maxPagesToSearch = Math.min(totalPages, 10)
+      let pageToCheck = 1
+      
+      const locateFocusTx = async () => {
+        while (pageToCheck <= maxPagesToSearch) {
+          const params: TransactionParams = {
+            page: pageToCheck,
+            page_size: currentPageSize,
+          }
+          if (searchTerm) params.search = searchTerm
+          if (selectedType !== "all") params.type = selectedType
+          if (selectedCategory) params.category_id = selectedCategory
+          if (selectedCategoryType) params.category_type = selectedCategoryType
+          if (selectedBankAccount) params.bank_account_id = selectedBankAccount
+          if (dateRange.start) params.start_date = dateRange.start
+          if (dateRange.end) params.end_date = dateRange.end
+          
+          const response = await api.getTransactions(params)
+          const found = response.transactions.some((tx: Transaction) => tx.id === focusTx)
+          
+          if (found) {
+            // Found the focused transaction, navigate to this page
+            setCurrentPage(pageToCheck)
+            setFocusedTxFound(true)
+            setFocusedOnce(true)
+            break
+          }
+          
+          pageToCheck++
+        }
+        
+        if (!focusedTxFound && pageToCheck > maxPagesToSearch) {
+          // Not found within search limit
+          console.warn(`Focused transaction ${focusTx} not found within first ${maxPagesToSearch} pages`)
+          setFocusedOnce(true) // Mark as done to prevent infinite search
+        }
+        
+        setIsLocatingFocusTx(false)
+      }
+      
+      locateFocusTx()
+    }
+  }, [focusTx, transactions, focusedOnce, focusedTxFound, totalPages, isLocatingFocusTx, currentPageSize, searchTerm, selectedType, selectedCategory, selectedCategoryType, selectedBankAccount, dateRange.start, dateRange.end])
+
+  // Scroll to focused transaction
+  useEffect(() => {
+    if (focusTx && focusedTxFound && !focusedOnce) return
+    
+    if (focusTx && focusedTxFound) {
+      setTimeout(() => {
+        const element = document.getElementById(`tx-${focusTx}`)
+        if (element) {
+          element.scrollIntoView({ behavior: "smooth", block: "center" })
+        }
+      }, 100)
+    }
+  }, [focusTx, focusedTxFound, focusedOnce])
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
   }
@@ -131,6 +214,8 @@ export default function TransactionsPage() {
   const resetToFirstPage = () => setCurrentPage(1)
 
   const [selectedTxId, setSelectedTxId] = useState<string | null>(null)
+  const [showAnalysisModal, setShowAnalysisModal] = useState(false)
+  const [showStatementsModal, setShowStatementsModal] = useState(false)
 
   const refreshList = useCallback(() => {
     const params: TransactionParams = {
@@ -231,10 +316,26 @@ export default function TransactionsPage() {
           <h1 className="text-xl font-semibold text-white tracking-tight">Transactions</h1>
           <p className="text-slate-500 text-sm mt-0.5">View and manage all your transactions.</p>
         </div>
-        <Link href="/transactions/upload" className="flex items-center gap-2 rounded-md border border-slate-600 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 transition-all hover:bg-slate-700 hover:border-slate-500 cursor-pointer">
-          <Plus className="h-4 w-4" />
-          Add Transaction
-        </Link>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowAnalysisModal(true)}
+            className="flex items-center gap-2 rounded-md border border-slate-600 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 transition-all hover:bg-slate-700 hover:border-slate-500 cursor-pointer"
+          >
+            <BarChart2 className="h-4 w-4" />
+            Analyse
+          </button>
+          <button
+            onClick={() => setShowStatementsModal(true)}
+            className="flex items-center gap-2 rounded-md border border-slate-600 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 transition-all hover:bg-slate-700 hover:border-slate-500 cursor-pointer"
+          >
+            <FileText className="h-4 w-4" />
+            Statements
+          </button>
+          <Link href="/transactions/upload" className="flex items-center gap-2 rounded-md border border-slate-600 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 transition-all hover:bg-slate-700 hover:border-slate-500 cursor-pointer">
+            <Plus className="h-4 w-4" />
+            Add Transaction
+          </Link>
+        </div>
       </div>
 
           {/* Search and Filters */}
@@ -395,8 +496,13 @@ export default function TransactionsPage() {
                         {group.transactions.map((transaction) => (
                           <div
                             key={transaction.id}
+                            id={`tx-${transaction.id}`}
                             onClick={() => setSelectedTxId(transaction.id)}
-                            className="grid grid-cols-1 md:grid-cols-12 gap-2 md:gap-4 px-6 py-3.5 hover:bg-white/[0.03] transition-colors cursor-pointer items-center"
+                            className={`grid grid-cols-1 md:grid-cols-12 gap-2 md:gap-4 px-6 py-3.5 hover:bg-white/[0.03] transition-colors cursor-pointer items-center ${
+                              focusTx === transaction.id
+                                ? "bg-emerald-500/10 border-l-4 border-emerald-500 animate-pulse"
+                                : ""
+                            }`}
                           >
                             <div className="col-span-5">
                               <p className="text-sm text-slate-200 truncate">{transaction.description}</p>
@@ -503,6 +609,27 @@ export default function TransactionsPage() {
           onClose={() => setSelectedTxId(null)}
           onMutated={() => { setSelectedTxId(null); refreshList() }}
         />
+      )}
+
+      {/* Analysis Modal */}
+      {showAnalysisModal && (
+        <AnalysisModal
+          params={{
+            ...(searchTerm ? { search: searchTerm } : {}),
+            ...(selectedType !== "all" ? { type: selectedType } : {}),
+            ...(selectedCategory ? { category_id: selectedCategory } : {}),
+            ...(selectedCategoryType ? { category_type: selectedCategoryType } : {}),
+            ...(selectedBankAccount ? { bank_account_id: selectedBankAccount } : {}),
+            ...(dateRange.start ? { start_date: dateRange.start } : {}),
+            ...(dateRange.end ? { end_date: dateRange.end } : {}),
+          }}
+          onClose={() => setShowAnalysisModal(false)}
+        />
+      )}
+
+      {/* Statements Modal */}
+      {showStatementsModal && (
+        <StatementsModal onClose={() => setShowStatementsModal(false)} />
       )}
     </div>
   )
@@ -879,6 +1006,403 @@ function TransactionModal({ id, categories, onClose, onMutated }: TransactionMod
           </div>
         </div>
       )}
+    </>
+  )
+}
+
+// ─── Analysis Modal ───────────────────────────────────────────────────────────
+
+interface AnalysisModalProps {
+  params: TransactionParams
+  onClose: () => void
+}
+
+function AnalysisModal({ params, onClose }: AnalysisModalProps) {
+  const [data, setData] = useState<TransactionAnalysis | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [isVisible, setIsVisible] = useState(false)
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setIsVisible(true))
+    return () => cancelAnimationFrame(frame)
+  }, [])
+
+  useEffect(() => {
+    api.getTransactionAnalysis(params)
+      .then(setData)
+      .catch((e) => setError(e?.message || "Failed to load analysis"))
+      .finally(() => setIsLoading(false))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const handleClose = useCallback(() => {
+    setIsVisible(false)
+    setTimeout(onClose, 250)
+  }, [onClose])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") handleClose() }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [handleClose])
+
+  const fmt = (n: number) =>
+    `₹${Math.abs(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+  const fmtDate = (s: string | null) => {
+    if (!s) return "—"
+    return new Date(s).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+  }
+
+  const bucketColor: Record<string, string> = {
+    needs: "bg-blue-500",
+    NEEDS: "bg-blue-500",
+    wants: "bg-violet-500",
+    WANTS: "bg-violet-500",
+    savings: "bg-teal-500",
+    SAVINGS: "bg-teal-500",
+    income: "bg-emerald-500",
+    INCOME: "bg-emerald-500",
+    transfer: "bg-slate-500",
+    TRANSFER: "bg-slate-500",
+  }
+
+  const bucketLabel: Record<string, string> = {
+    needs: "Needs", NEEDS: "Needs",
+    wants: "Wants", WANTS: "Wants",
+    savings: "Savings", SAVINGS: "Savings",
+    income: "Income", INCOME: "Income",
+    transfer: "Transfer", TRANSFER: "Transfer",
+  }
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className={`fixed inset-0 z-40 bg-black/60 transition-opacity duration-250 ${isVisible ? "opacity-100" : "opacity-0"}`}
+        onClick={handleClose}
+      />
+
+      {/* Modal */}
+      <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-250 ${isVisible ? "opacity-100 scale-100" : "opacity-0 scale-95"}`}>
+        <div className="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-xl border border-white/[0.08] bg-[#0b1120] shadow-2xl overflow-hidden">
+
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-white/[0.07] px-6 py-4 shrink-0">
+            <div className="flex items-center gap-2.5">
+              <BarChart2 className="h-4 w-4 text-slate-400" />
+              <span className="text-sm font-semibold text-slate-200">Transaction Analysis</span>
+            </div>
+            <button
+              onClick={handleClose}
+              className="rounded-md p-1.5 text-slate-500 hover:bg-white/[0.06] hover:text-slate-300 transition-colors cursor-pointer"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-20">
+                <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+              </div>
+            ) : error ? (
+              <div className="rounded-md bg-rose-500/10 border border-rose-500/15 p-4 text-rose-400 text-sm">{error}</div>
+            ) : data ? (
+              <>
+                {/* Summary Cards */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="rounded-lg border border-emerald-500/15 bg-emerald-500/5 p-4">
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <TrendingUp className="h-3.5 w-3.5 text-emerald-400/70" />
+                      <span className="text-xs text-emerald-400/70 uppercase tracking-wider">Total Income</span>
+                    </div>
+                    <p className="text-lg font-semibold text-emerald-400 tabular-nums">{fmt(data.total_income)}</p>
+                  </div>
+                  <div className="rounded-lg border border-rose-500/15 bg-rose-500/5 p-4">
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <TrendingDown className="h-3.5 w-3.5 text-rose-400/70" />
+                      <span className="text-xs text-rose-400/70 uppercase tracking-wider">Total Spend</span>
+                    </div>
+                    <p className="text-lg font-semibold text-rose-400 tabular-nums">{fmt(data.total_expenses)}</p>
+                  </div>
+                  <div className={`rounded-lg border p-4 ${data.net >= 0 ? "border-emerald-500/15 bg-emerald-500/5" : "border-rose-500/15 bg-rose-500/5"}`}>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <Minus className="h-3.5 w-3.5 text-slate-400" />
+                      <span className="text-xs text-slate-400 uppercase tracking-wider">Net</span>
+                    </div>
+                    <p className={`text-lg font-semibold tabular-nums ${data.net >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                      {data.net >= 0 ? "+" : "-"}{fmt(data.net)}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Info Row */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {[
+                    { label: "From", value: fmtDate(data.start_date) },
+                    { label: "To", value: fmtDate(data.end_date) },
+                    { label: "Transactions", value: data.transaction_count.toLocaleString("en-IN") },
+                    { label: "Avg Daily Spend", value: fmt(data.avg_daily_expense) },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
+                      <p className="text-xs text-slate-500 mb-1">{label}</p>
+                      <p className="text-sm font-medium text-slate-200 tabular-nums">{value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Largest Transactions */}
+                {(data.largest_expense !== null || data.largest_income !== null) && (
+                  <div className="grid grid-cols-2 gap-3">
+                    {data.largest_expense !== null && (
+                      <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
+                        <p className="text-xs text-slate-500 mb-1">Largest Expense</p>
+                        <p className="text-sm font-medium text-rose-400 tabular-nums">-{fmt(data.largest_expense)}</p>
+                      </div>
+                    )}
+                    {data.largest_income !== null && (
+                      <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
+                        <p className="text-xs text-slate-500 mb-1">Largest Income</p>
+                        <p className="text-sm font-medium text-emerald-400 tabular-nums">+{fmt(data.largest_income)}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Bucket Breakdown */}
+                {data.bucket_breakdown.length > 0 && (
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Budget Buckets</h3>
+                    <div className="space-y-2.5">
+                      {data.bucket_breakdown.map((b, i) => (
+                        <div key={`bucket-${i}-${b.bucket}`}>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-sm text-slate-300">{bucketLabel[b.bucket] ?? b.bucket}</span>
+                            <div className="flex items-center gap-3">
+                              <span className="text-xs text-slate-500">{b.transaction_count} txns</span>
+                              <span className="text-sm font-medium text-slate-200 tabular-nums w-28 text-right">{fmt(b.total)}</span>
+                              <span className="text-xs text-slate-500 w-10 text-right">{b.percentage.toFixed(1)}%</span>
+                            </div>
+                          </div>
+                          <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all ${bucketColor[b.bucket] ?? "bg-slate-500"}`}
+                              style={{ width: `${Math.min(b.percentage, 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Category Breakdown */}
+                {data.category_breakdown.length > 0 && (
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Category Breakdown</h3>
+                    <div className="space-y-2">
+                      {data.category_breakdown.map((c, i) => (
+                        <div key={`cat-${i}-${c.category_id ?? c.category_name}`}>
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-sm text-slate-300 truncate">{c.category_name}</span>
+                              {c.category_type && (
+                                <span className="shrink-0 text-xs px-1.5 py-0.5 rounded border border-white/[0.07] text-slate-500 capitalize">{c.category_type.toLowerCase()}</span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 shrink-0">
+                              <span className="text-xs text-slate-500">{c.transaction_count}</span>
+                              <span className="text-sm font-medium text-slate-200 tabular-nums w-28 text-right">{fmt(c.total)}</span>
+                              <span className="text-xs text-slate-500 w-10 text-right">{c.percentage.toFixed(1)}%</span>
+                            </div>
+                          </div>
+                          <div className="h-1 rounded-full bg-white/[0.05] overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-slate-600 transition-all"
+                              style={{ width: `${Math.min(c.percentage, 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Top 5 Expense Categories */}
+                {data.top_expense_categories.length > 0 && (
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Top Expense Categories</h3>
+                    <div className="rounded-lg border border-white/[0.06] overflow-hidden">
+                      {data.top_expense_categories.map((c, i) => (
+                        <div
+                          key={`top-cat-${i}-${c.category_id ?? c.category_name}`}
+                          className={`flex items-center justify-between px-4 py-3 ${i !== data.top_expense_categories.length - 1 ? "border-b border-white/[0.05]" : ""}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs text-slate-600 tabular-nums w-4">{i + 1}</span>
+                            <span className="text-sm text-slate-300">{c.category_name}</span>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <span className="text-xs text-slate-500">{c.transaction_count} txns</span>
+                            <span className="text-sm font-medium text-rose-400 tabular-nums">{fmt(c.total)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+// ─── Statements Modal ─────────────────────────────────────────────────────────
+
+interface StatementsModalProps {
+  onClose: () => void
+}
+
+function StatementsModal({ onClose }: StatementsModalProps) {
+  const [uploads, setUploads] = useState<Upload[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [isVisible, setIsVisible] = useState(false)
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setIsVisible(true))
+    return () => cancelAnimationFrame(frame)
+  }, [])
+
+  useEffect(() => {
+    api.getUploadHistory()
+      .then((res) => setUploads(res.uploads))
+      .catch((e) => setError(e?.message || "Failed to load statements"))
+      .finally(() => setIsLoading(false))
+  }, [])
+
+  const handleClose = useCallback(() => {
+    setIsVisible(false)
+    setTimeout(onClose, 250)
+  }, [onClose])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") handleClose() }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [handleClose])
+
+  const fmtDate = (s: string | null | undefined) => {
+    if (!s) return "—"
+    return new Date(s).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+  }
+
+  const statusConfig: Record<string, { label: string; className: string }> = {
+    completed:  { label: "Completed",  className: "bg-emerald-500/10 text-emerald-400 border-emerald-500/15" },
+    processing: { label: "Processing", className: "bg-yellow-500/10 text-yellow-400 border-yellow-500/15" },
+    pending:    { label: "Pending",    className: "bg-slate-500/10 text-slate-400 border-slate-500/15" },
+    failed:     { label: "Failed",     className: "bg-rose-500/10 text-rose-400 border-rose-500/15" },
+  }
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className={`fixed inset-0 z-40 bg-black/50 transition-opacity duration-250 ${isVisible ? "opacity-100" : "opacity-0"}`}
+        onClick={handleClose}
+      />
+
+      {/* Drawer */}
+      <div className={`fixed inset-y-0 right-0 z-50 flex w-full max-w-lg flex-col border-l border-white/[0.07] bg-[#0b1120] shadow-2xl transition-transform duration-250 ease-out ${isVisible ? "translate-x-0" : "translate-x-full"}`}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-white/[0.07] px-5 py-3.5 shrink-0">
+          <div className="flex items-center gap-2">
+            <FileText className="h-4 w-4 text-slate-400" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Bank Statements</span>
+          </div>
+          <button
+            onClick={handleClose}
+            className="rounded-md p-1.5 text-slate-500 hover:bg-white/[0.06] hover:text-slate-300 transition-colors cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto">
+          {isLoading ? (
+            <div className="flex items-center justify-center py-20">
+              <Loader2 className="h-5 w-5 animate-spin text-slate-500" />
+            </div>
+          ) : error ? (
+            <div className="m-5 rounded-md bg-rose-500/10 border border-rose-500/15 p-4 text-rose-400 text-sm">{error}</div>
+          ) : uploads.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-center px-6">
+              <FileText className="h-8 w-8 text-slate-600 mb-3" />
+              <p className="text-slate-500 text-sm">No statements uploaded yet.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-white/[0.05]">
+              {uploads.map((upload) => {
+                const sc = statusConfig[upload.status] ?? statusConfig.pending
+                return (
+                  <div key={upload.id} className="px-5 py-4 hover:bg-white/[0.02] transition-colors">
+                    {/* File name + status */}
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-200 truncate">
+                          {upload.file_name || "Manual Entry"}
+                        </p>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Uploaded {fmtDate(upload.created_at)}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`text-xs px-2 py-0.5 rounded border uppercase tracking-wide ${sc.className}`}>
+                          {sc.label}
+                        </span>
+                        <span className="text-xs px-2 py-0.5 rounded border border-white/[0.07] text-slate-500 uppercase tracking-wide">
+                          {upload.source.toUpperCase()}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Stats row */}
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                      {upload.imported_transactions > 0 && (
+                        <span className="text-emerald-500/70">{upload.imported_transactions} imported</span>
+                      )}
+                      {upload.duplicate_transactions > 0 && (
+                        <span>{upload.duplicate_transactions} duplicates</span>
+                      )}
+                      {upload.failed_transactions > 0 && (
+                        <span className="text-rose-500/70">{upload.failed_transactions} failed</span>
+                      )}
+                      {upload.total_transactions > 0 && (
+                        <span>{upload.total_transactions} total</span>
+                      )}
+                    </div>
+
+                    {/* Date range */}
+                    {(upload.start_date || upload.end_date) && (
+                      <p className="text-xs text-slate-600 mt-1.5">
+                        Statement period: {fmtDate(upload.start_date)} → {fmtDate(upload.end_date)}
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
     </>
   )
 }

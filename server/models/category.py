@@ -9,12 +9,15 @@ from database import Base
 
 
 class CategoryType(str, enum.Enum):
-    """Category type enum for 50/30/20 rule."""
+    """Category type enum for 50/30/20 rule.
+    TRANSFER and INCOME are legacy values — new code should use DirectionType
+    on the transaction rather than assigning a transfer/income category.
+    """
     NEEDS = "needs"
     WANTS = "wants"
     SAVINGS = "savings"
     INCOME = "income"
-    TRANSFER = "transfer"
+    TRANSFER = "transfer"  # frozen — new transfer categories should not be created
 
 
 class Category(Base):
@@ -31,6 +34,13 @@ class Category(Base):
     description = Column(Text, nullable=True)
     is_system = Column(Boolean, default=False)  # System categories vs user-created
     is_active = Column(Boolean, default=True)
+
+    # Hierarchical classification support (new)
+    # bucket_type mirrors category_type for NEEDS/WANTS/SAVINGS; 'none' for INCOME/TRANSFER
+    bucket_type = Column(String(20), nullable=True)
+    # is_misc_category marks Misc Needs / Misc Wants / Misc Savings fallback categories
+    is_misc_category = Column(Boolean, default=False)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),

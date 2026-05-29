@@ -15,6 +15,10 @@ class ScenarioBase(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
+    goal_id: Optional[UUID] = None
+    scenario_type: str = Field(default="custom", description="Type of scenario (custom, goal_achievement, etc.)")
+    simulation_horizon_months: int = Field(default=12, ge=1, le=360)
+    strategy_type: str = Field(default="balanced", description="Strategy type (conservative, balanced, aggressive)")
     income_change: Optional[Decimal] = Field(None)
     new_income: Optional[Decimal] = Field(None, ge=0)
     scenario_needs_percentage: Optional[Decimal] = Field(None, ge=0, le=100)
@@ -48,6 +52,10 @@ class ScenarioUpdate(BaseModel):
 
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
+    goal_id: Optional[UUID] = None
+    scenario_type: Optional[str] = None
+    simulation_horizon_months: Optional[int] = Field(None, ge=1, le=360)
+    strategy_type: Optional[str] = None
     income_change: Optional[Decimal] = Field(None)
     new_income: Optional[Decimal] = Field(None, ge=0)
     scenario_needs_percentage: Optional[Decimal] = Field(None, ge=0, le=100)
@@ -63,6 +71,7 @@ class ScenarioResponse(ScenarioBase):
     id: UUID
     user_id: UUID
     budget_id: Optional[UUID] = None
+    feasibility_score: Optional[Decimal] = None
     scenario_needs_amount: Optional[Decimal] = None
     scenario_wants_amount: Optional[Decimal] = None
     scenario_savings_amount: Optional[Decimal] = None

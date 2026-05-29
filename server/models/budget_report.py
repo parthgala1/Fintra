@@ -48,6 +48,22 @@ class BudgetReport(Base):
     # Remaining budget for period
     remaining_budget = Column(Numeric(15, 2), nullable=True)
     
+    # Transfer summary (excluded from spending totals)
+    transfer_total = Column(Numeric(15, 2), nullable=True, default=0)
+    transfer_transaction_count = Column(Numeric(10, 0), nullable=True, default=0)
+
+    # Pending review (needs_review=True transactions)
+    pending_review_count = Column(Numeric(10, 0), nullable=True, default=0)
+    pending_review_amount = Column(Numeric(15, 2), nullable=True, default=0)
+
+    # Misc categorized (is_misc_category=True — bucket known but semantic unknown)
+    misc_categorized_total = Column(Numeric(15, 2), nullable=True, default=0)
+    misc_categorized_count = Column(Numeric(10, 0), nullable=True, default=0)
+
+    # AI low-confidence classifications
+    low_confidence_total = Column(Numeric(15, 2), nullable=True, default=0)
+    low_confidence_count = Column(Numeric(10, 0), nullable=True, default=0)
+
     # Summary
     is_over_budget = Column(Boolean, default=False)
     summary = Column(Text, nullable=True)

@@ -13,10 +13,17 @@ import {
   X,
   Save,
   GitBranch,
-  AlertTriangle
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  BarChart2,
+  GitCompare,
 } from "lucide-react"
-import { api, Scenario, CreateScenarioData, ScenarioCalculation, Budget, BudgetReport } from "@/lib/api"
+import { api, Scenario, CreateScenarioData, ScenarioCalculation, Budget, BudgetReport, ScenarioSnapshot } from "@/lib/api"
 import { formatINR } from "@/lib/utils"
+import { ScenarioEventEditor } from "@/components/scenario/ScenarioEventEditor"
+import { TimelineVisualization } from "@/components/scenario/TimelineVisualization"
+import { ComparisonDashboard } from "@/components/scenario/ComparisonDashboard"
 
 interface BudgetScenariosPageProps {
   params: Promise<{ id: string }>
@@ -36,6 +43,13 @@ export default function BudgetScenariosPage({ params }: BudgetScenariosPageProps
   const [calculations, setCalculations] = useState<Record<string, ScenarioCalculation>>({})
   const [applyConfirmId, setApplyConfirmId] = useState<string | null>(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+
+  // Event-driven simulation state
+  const [expandedScenarioId, setExpandedScenarioId] = useState<string | null>(null)
+  const [simulatingId, setSimulatingId] = useState<string | null>(null)
+  const [simulationResults, setSimulationResults] = useState<Record<string, ScenarioSnapshot[]>>({})
+  const [comparisonMode, setComparisonMode] = useState(false)
+  const [selectedForComparison, setSelectedForComparison] = useState<string[]>([])
 
   const [formData, setFormData] = useState<CreateScenarioData>({
     name: "",
@@ -124,6 +138,30 @@ export default function BudgetScenariosPage({ params }: BudgetScenariosPageProps
     } catch (err) {
       console.error("Failed to delete scenario:", err)
     }
+  }
+
+  const handleSimulate = async (scenarioId: string) => {
+    setSimulatingId(scenarioId)
+    try {
+      const results = await api.simulateScenario(scenarioId)
+      setSimulationResults(prev => ({ ...prev, [scenarioId]: results }))
+    } catch (err) {
+      console.error("Failed to simulate scenario:", err)
+    } finally {
+      setSimulatingId(null)
+    }
+  }
+
+  const toggleExpanded = (scenarioId: string) => {
+    setExpandedScenarioId(prev => prev === scenarioId ? null : scenarioId)
+  }
+
+  const toggleComparisonSelection = (scenarioId: string) => {
+    setSelectedForComparison(prev =>
+      prev.includes(scenarioId)
+        ? prev.filter(id => id !== scenarioId)
+        : [...prev, scenarioId]
+    )
   }
 
   const formatAmount = (amount?: number) => {
@@ -226,6 +264,14 @@ export default function BudgetScenariosPage({ params }: BudgetScenariosPageProps
                       </div>
                       <div className="flex items-center gap-2">
                         {scenario.impact && getImpactBadge(scenario.impact)}
+                        {comparisonMode && (
+                          <input
+                            type="checkbox"
+                            checked={selectedForComparison.includes(scenario.id)}
+                            onChange={() => toggleComparisonSelection(scenario.id)}
+                            className="h-4 w-4 rounded border-white/20 bg-white/10 text-blue-500 cursor-pointer"
+                          />
+                        )}
                         <button
                           onClick={() => handleCalculate(scenario.id)}
                           disabled={calculatingId === scenario.id}
@@ -237,6 +283,21 @@ export default function BudgetScenariosPage({ params }: BudgetScenariosPageProps
                             <Play className="h-4 w-4" />
                           )}
                           Calculate
+                        </button>
+                        <button
+                          onClick={() => toggleExpanded(scenario.id)}
+                          className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors cursor-pointer ${
+                            expandedScenarioId === scenario.id
+                              ? "border-blue-500/40 bg-blue-500/10 text-blue-400"
+                              : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white"
+                          }`}
+                        >
+                          <BarChart2 className="h-4 w-4" />
+                          {expandedScenarioId === scenario.id ? (
+                            <ChevronUp className="h-3 w-3" />
+                          ) : (
+                            <ChevronDown className="h-3 w-3" />
+                          )}
                         </button>
                         <button
                           onClick={() => setApplyConfirmId(scenario.id)}
@@ -282,11 +343,79 @@ export default function BudgetScenariosPage({ params }: BudgetScenariosPageProps
                         </div>
                       </div>
                     )}
+
+                    {/* Event Editor & Timeline (expanded view) */}
+                    {expandedScenarioId === scenario.id && (
+                      <div className="mt-4 pt-4 border-t border-white/10 space-y-6">
+                        {/* Event Editor */}
+                        <ScenarioEventEditor scenarioId={scenario.id} />
+
+                        {/* Simulation */}
+                        <div>
+                          <div className="flex items-center justify-between mb-4">
+                            <p className="text-xs font-medium text-slate-400 uppercase">Timeline Simulation</p>
+                            <button
+                              onClick={() => handleSimulate(scenario.id)}
+                              disabled={simulatingId === scenario.id}
+                              className="flex items-center gap-2 rounded-lg bg-blue-500/10 px-3 py-2 text-sm text-blue-400 hover:bg-blue-500/20 transition-colors disabled:opacity-50 cursor-pointer"
+                            >
+                              {simulatingId === scenario.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <BarChart2 className="h-4 w-4" />
+                              )}
+                              Run Simulation
+                            </button>
+                          </div>
+                          {simulationResults[scenario.id] && (
+                            <TimelineVisualization
+                              snapshots={simulationResults[scenario.id]}
+                              title={`${scenario.name} — Timeline`}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
             )}
           </div>
+
+          {/* Comparison Dashboard */}
+          {scenarios.length > 1 && (
+            <div className="mt-8">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-white">Scenario Comparison</h3>
+                <button
+                  onClick={() => {
+                    setComparisonMode(!comparisonMode)
+                    if (comparisonMode) setSelectedForComparison([])
+                  }}
+                  className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors cursor-pointer ${
+                    comparisonMode
+                      ? "bg-blue-500 text-white hover:bg-blue-400"
+                      : "border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white"
+                  }`}
+                >
+                  <GitCompare className="h-4 w-4" />
+                  {comparisonMode ? `Compare (${selectedForComparison.length} selected)` : "Compare Scenarios"}
+                </button>
+              </div>
+
+              {comparisonMode && selectedForComparison.length >= 2 && (
+                <ComparisonDashboard
+                  baseScenarioId={selectedForComparison[0]}
+                  comparisonScenarioIds={selectedForComparison.slice(1)}
+                />
+              )}
+              {comparisonMode && selectedForComparison.length < 2 && (
+                <p className="text-sm text-slate-400 text-center py-4">
+                  Select at least 2 scenarios using the checkboxes to compare
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </main>
 

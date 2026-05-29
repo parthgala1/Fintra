@@ -47,6 +47,10 @@ class CategoryResponse(CategoryBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
+    # Hierarchical classification fields (new — Optional for backward compatibility)
+    bucket_type: Optional[str] = None
+    is_misc_category: bool = False
+
     model_config = ConfigDict(from_attributes=True)
 
 

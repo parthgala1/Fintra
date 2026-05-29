@@ -100,6 +100,9 @@ class BudgetCreateWithAnalysisRequest(BaseModel):
 
 class BudgetHistoryAnalysisResponse(BaseModel):
     """Response for getting budget's historical analysis."""
+    analysis_id: UUID
+    budget_id: UUID
+    budget_name: str
     analysis_start_date: date
     analysis_end_date: date
     total_spending: Decimal = Field(..., decimal_places=2)
@@ -113,3 +116,45 @@ class BudgetHistoryAnalysisResponse(BaseModel):
     total_transactions: int
     data_quality: str
     validation_warnings: List[str] = Field(default_factory=list)
+
+
+class BudgetCreateFromHistoryRequest(BaseModel):
+    """Request to create a new budget from an existing historical analysis snapshot."""
+    name: str = Field(..., min_length=1, max_length=255)
+    budget_start_date: date
+    income: Optional[Decimal] = Field(None, ge=0)
+    rule_type: Literal["fifty_thirty_twenty", "custom", "manual_custom"] = Field(
+        "custom",
+        description=(
+            "fifty_thirty_twenty: fixed 50/30/20 splits; "
+            "custom: historical spending percentages; "
+            "manual_custom: user-supplied percentages via custom_*_percentage fields"
+        ),
+    )
+    custom_needs_percentage: Optional[Decimal] = Field(None, ge=0, le=100)
+    custom_wants_percentage: Optional[Decimal] = Field(None, ge=0, le=100)
+    custom_savings_percentage: Optional[Decimal] = Field(None, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def validate_manual_custom_fields(self):
+        if self.rule_type == "manual_custom":
+            fields = [
+                self.custom_needs_percentage,
+                self.custom_wants_percentage,
+                self.custom_savings_percentage,
+            ]
+            if any(v is None for v in fields):
+                raise ValueError(
+                    "custom_needs_percentage, custom_wants_percentage, and "
+                    "custom_savings_percentage are all required when rule_type is manual_custom"
+                )
+            total = (
+                self.custom_needs_percentage
+                + self.custom_wants_percentage
+                + self.custom_savings_percentage
+            )
+            if abs(total - Decimal("100")) > Decimal("0.5"):
+                raise ValueError(
+                    f"Custom percentages must sum to 100, got {total}"
+                )
+        return self

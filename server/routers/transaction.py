@@ -7,13 +7,14 @@ Provides CRUD endpoints for transactions.
 import logging
 from calendar import monthrange
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session, joinedload, contains_eager
-from sqlalchemy import cast, String
+from sqlalchemy import cast, String, func, case
 
 from auth.jwt import verify_token
 from auth.router import get_current_user
@@ -25,6 +26,9 @@ from models.budget import Budget, BudgetPeriod
 from models.category import Category
 from schemas.transaction import (
     BulkCategoryUpdate,
+    BucketBreakdownItem,
+    CategoryBreakdownItem,
+    TransactionAnalysisResponse,
     TransactionCreate,
     TransactionListResponse,
     TransactionResponse,
@@ -224,6 +228,180 @@ def list_transactions(
     )
 
 
+@router.get("/analysis", response_model=TransactionAnalysisResponse)
+def get_transaction_analysis(
+    bank_account_id: Optional[UUID] = None,
+    category_id: Optional[UUID] = None,
+    category_type: Optional[str] = None,
+    search: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    type: Optional[str] = None,
+    current_user: User = Depends(get_current_user_dep),
+    db: Session = Depends(get_db),
+):
+    """
+    Return aggregated analysis of transactions matching the given filters.
+    Applies the same filter logic as list_transactions.
+    """
+    logger.info(f"Analysis query for user {current_user.id}, filters: start={start_date} end={end_date} type={type} category={category_id} category_type={category_type}")
+
+    # ── Base filter builder (reusable) ────────────────────────────────────────
+    def _apply_filters(q, joined_category: bool = False):
+        q = q.filter(Transaction.user_id == current_user.id)
+        if bank_account_id:
+            q = q.filter(Transaction.bank_account_id == bank_account_id)
+        if category_id:
+            q = q.filter(Transaction.category_id == category_id)
+        if category_type:
+            cat_type_upper = category_type.upper()
+            if not joined_category:
+                q = q.join(Category, Transaction.category_id == Category.id)
+            q = q.filter(cast(Category.category_type, String) == cat_type_upper)
+        if search:
+            q = q.filter(Transaction.description.ilike(f"%{search}%"))
+        if start_date:
+            q = q.filter(Transaction.transaction_date >= start_date)
+        if end_date:
+            q = q.filter(Transaction.transaction_date <= end_date)
+        if type and type != "all":
+            try:
+                tx_type = TransactionType(type.lower())
+                q = q.filter(Transaction.transaction_type == tx_type)
+            except ValueError:
+                pass
+        return q
+
+    # ── 1. Aggregate totals ───────────────────────────────────────────────────
+    totals_q = _apply_filters(
+        db.query(
+            func.sum(
+                case(
+                    (Transaction.transaction_type == TransactionType.INCOME, Transaction.amount),
+                    else_=Decimal("0")
+                )
+            ).label("total_income"),
+            func.sum(
+                case(
+                    (Transaction.transaction_type.in_([TransactionType.EXPENSE, TransactionType.TRANSFER]), Transaction.amount),
+                    else_=Decimal("0")
+                )
+            ).label("total_expenses"),
+            func.count(Transaction.id).label("tx_count"),
+            func.min(Transaction.transaction_date).label("min_date"),
+            func.max(Transaction.transaction_date).label("max_date"),
+            func.max(
+                case(
+                    (Transaction.transaction_type == TransactionType.EXPENSE, Transaction.amount),
+                    else_=None
+                )
+            ).label("largest_expense"),
+            func.max(
+                case(
+                    (Transaction.transaction_type == TransactionType.INCOME, Transaction.amount),
+                    else_=None
+                )
+            ).label("largest_income"),
+        )
+    )
+    totals = totals_q.one()
+
+    total_income = float(totals.total_income or 0)
+    total_expenses = float(totals.total_expenses or 0)
+    tx_count = totals.tx_count or 0
+    min_date = totals.min_date
+    max_date = totals.max_date
+    largest_expense = float(totals.largest_expense) if totals.largest_expense is not None else None
+    largest_income = float(totals.largest_income) if totals.largest_income is not None else None
+
+    # Average daily expense
+    if min_date and max_date and total_expenses > 0:
+        days = max(1, (max_date.date() - min_date.date()).days + 1)
+        avg_daily_expense = total_expenses / days
+    else:
+        avg_daily_expense = 0.0
+
+    # ── 2. Category breakdown ─────────────────────────────────────────────────
+    cat_q = _apply_filters(
+        db.query(
+            func.coalesce(cast(Transaction.category_id, String), "uncategorized").label("cat_id"),
+            func.coalesce(Category.name, "Uncategorized").label("cat_name"),
+            func.coalesce(cast(Category.category_type, String), "expense").label("cat_type"),
+            func.sum(Transaction.amount).label("total"),
+            func.count(Transaction.id).label("count"),
+        )
+        .outerjoin(Category, Transaction.category_id == Category.id)
+        .group_by(
+            Transaction.category_id,
+            Category.name,
+            Category.category_type,
+        ),
+        joined_category=True,
+    ).order_by(func.sum(Transaction.amount).desc())
+
+    cat_rows = cat_q.all()
+
+    # Build denominator for percentage: use total_expenses for expense categories, total_income for income
+    total_all = total_income + total_expenses or 1.0
+
+    category_breakdown = [
+        CategoryBreakdownItem(
+            category_id=r.cat_id if r.cat_id != "uncategorized" else None,
+            category_name=r.cat_name,
+            category_type=r.cat_type,
+            total=float(r.total or 0),
+            transaction_count=r.count,
+            percentage=round(float(r.total or 0) / total_all * 100, 1),
+        )
+        for r in cat_rows
+    ]
+
+    top_expense_categories = [
+        item for item in category_breakdown
+        if item.category_type not in ("income", "INCOME")
+    ][:5]
+
+    # ── 3. Bucket breakdown ───────────────────────────────────────────────────
+    bucket_q = _apply_filters(
+        db.query(
+            func.coalesce(cast(Transaction.bucket_type, String), cast(Transaction.transaction_type, String), "other").label("bucket"),
+            func.sum(Transaction.amount).label("total"),
+            func.count(Transaction.id).label("count"),
+        )
+        .group_by(
+            Transaction.bucket_type,
+            Transaction.transaction_type,
+        )
+    ).order_by(func.sum(Transaction.amount).desc())
+
+    bucket_rows = bucket_q.all()
+
+    bucket_breakdown = [
+        BucketBreakdownItem(
+            bucket=r.bucket or "other",
+            total=float(r.total or 0),
+            transaction_count=r.count,
+            percentage=round(float(r.total or 0) / total_all * 100, 1),
+        )
+        for r in bucket_rows
+    ]
+
+    return TransactionAnalysisResponse(
+        total_income=total_income,
+        total_expenses=total_expenses,
+        net=total_income - total_expenses,
+        transaction_count=tx_count,
+        start_date=min_date,
+        end_date=max_date,
+        avg_daily_expense=avg_daily_expense,
+        largest_expense=largest_expense,
+        largest_income=largest_income,
+        category_breakdown=category_breakdown,
+        bucket_breakdown=bucket_breakdown,
+        top_expense_categories=top_expense_categories,
+    )
+
+
 @router.get("/{transaction_id}", response_model=TransactionResponse)
 def get_transaction(
     transaction_id: UUID,
@@ -358,7 +536,25 @@ def update_transaction(
     update_data = transaction_data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(transaction, field, value)
-    
+
+    # Mark as user-verified when category is manually changed
+    if "category_id" in update_data and update_data["category_id"] != old_category_id:
+        transaction.user_verified = True
+
+    # When direction_type is set to transfer, clear bucket_type
+    if "direction_type" in update_data and update_data["direction_type"] == "transfer":
+        transaction.bucket_type = "none"
+
+    # Validate direction/bucket integrity
+    from services.validation import validate_transaction_classification
+    try:
+        validate_transaction_classification(
+            direction_type=str(transaction.direction_type.value) if transaction.direction_type else None,
+            bucket_type=str(transaction.bucket_type.value) if transaction.bucket_type else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
     db.commit()
     db.refresh(transaction)
 

@@ -11,18 +11,46 @@ from database import Base
 
 
 class TransactionType(str, enum.Enum):
-    """Transaction type enum."""
+    """Legacy transaction type enum — kept for backward compatibility.
+    New code should use DirectionType.
+    """
     INCOME = "income"
     EXPENSE = "expense"
     TRANSFER = "transfer"
 
 
 class TransactionStatus(str, enum.Enum):
-    """Transaction status enum."""
+    """Transaction status enum (bank posting state, orthogonal to classification)."""
     PENDING = "pending"
     POSTED = "posted"
     CLEARED = "cleared"
     RECONCILED = "reconciled"
+
+
+class DirectionType(str, enum.Enum):
+    """Direction of money flow — primary classification dimension."""
+    INCOME = "income"
+    EXPENSE = "expense"
+    TRANSFER = "transfer"
+    REFUND = "refund"
+    ADJUSTMENT = "adjustment"
+
+
+class BucketType(str, enum.Enum):
+    """50/30/20 budget bucket — only applies to expense/refund transactions."""
+    NEEDS = "needs"
+    WANTS = "wants"
+    SAVINGS = "savings"
+    NONE = "none"
+
+
+class ClassificationSource(str, enum.Enum):
+    """How the transaction was classified."""
+    RULE = "rule"
+    KEYWORD = "keyword"
+    AI = "ai"
+    MANUAL = "manual"
+    SYSTEM = "system"
 
 
 class Transaction(Base):
@@ -43,9 +71,19 @@ class Transaction(Base):
     # Normalized data
     description = Column(String(500), nullable=True)
     amount = Column(Numeric(15, 2), nullable=False)
-    transaction_type = Column(SQLEnum(TransactionType), nullable=False, index=True)
+    transaction_type = Column(SQLEnum(TransactionType), nullable=False, index=True)  # legacy
     status = Column(SQLEnum(TransactionStatus), nullable=False, default=TransactionStatus.POSTED)
     
+    # Hierarchical classification dimensions (new)
+    direction_type = Column(SQLEnum(DirectionType, values_callable=lambda obj: [e.value for e in obj]), nullable=True, index=True)
+    bucket_type = Column(SQLEnum(BucketType, values_callable=lambda obj: [e.value for e in obj]), nullable=True, default=BucketType.NONE)
+
+    # Classification metadata (new)
+    confidence_score = Column(Numeric(5, 4), nullable=True)  # 0.0000–1.0000
+    classification_source = Column(SQLEnum(ClassificationSource, values_callable=lambda obj: [e.value for e in obj]), nullable=True)
+    user_verified = Column(Boolean, default=False)
+    needs_review = Column(Boolean, default=False)
+
     # Dates
     transaction_date = Column(DateTime(timezone=True), nullable=False, index=True)
     posted_date = Column(DateTime(timezone=True), nullable=True)
@@ -69,6 +107,8 @@ class Transaction(Base):
     __table_args__ = (
         Index('idx_transactions_user_date', 'user_id', 'transaction_date'),
         Index('idx_transactions_user_category', 'user_id', 'category_id'),
+        Index('idx_transactions_user_needs_review', 'user_id', 'needs_review'),
+        Index('idx_transactions_user_direction', 'user_id', 'direction_type'),
     )
 
     # Relationships

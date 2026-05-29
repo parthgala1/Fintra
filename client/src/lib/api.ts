@@ -43,6 +43,7 @@ export interface Transaction {
   date: string;
   description: string;
   amount: number;
+  category: string; // Added category field
   type: "income" | "expense";
   category_id: string | null;
   category_name?: string;
@@ -102,6 +103,38 @@ export interface BulkUpdateTransactionsData {
   category_id: string;
 }
 
+// Transaction Analysis Types
+export interface TransactionCategoryBreakdownItem {
+  category_id: string | null;
+  category_name: string;
+  category_type: string | null;
+  total: number;
+  transaction_count: number;
+  percentage: number;
+}
+
+export interface TransactionBucketBreakdownItem {
+  bucket: string;
+  total: number;
+  transaction_count: number;
+  percentage: number;
+}
+
+export interface TransactionAnalysis {
+  total_income: number;
+  total_expenses: number;
+  net: number;
+  transaction_count: number;
+  start_date: string | null;
+  end_date: string | null;
+  avg_daily_expense: number;
+  largest_expense: number | null;
+  largest_income: number | null;
+  category_breakdown: TransactionCategoryBreakdownItem[];
+  bucket_breakdown: TransactionBucketBreakdownItem[];
+  top_expense_categories: TransactionCategoryBreakdownItem[];
+}
+
 // Upload Types
 export interface Upload {
   id: string;
@@ -112,6 +145,8 @@ export interface Upload {
   imported_transactions: number;
   duplicate_transactions: number;
   failed_transactions: number;
+  start_date?: string | null;
+  end_date?: string | null;
   // Reconciliation fields
   statement_balance_extracted?: number | null;
   statement_date_extracted?: string | null;
@@ -148,6 +183,8 @@ export interface Category {
     | "both";
   is_system: boolean;
   is_active?: boolean;
+  is_misc_category?: boolean;
+  bucket_type?: string | null;
   icon: string | null;
   color: string | null;
   description?: string;
@@ -343,6 +380,7 @@ export interface BudgetAnalysisBreakdown {
 
 export interface BudgetAnalysisResponse {
   analysis_id: string;
+  budget_id?: string;
   budget_name: string;
   analysis_start_date: string;
   analysis_end_date: string;
@@ -376,6 +414,21 @@ export interface CreateBudgetWithAnalysisRequest {
   custom_needs_percentage?: number;
   custom_wants_percentage?: number;
   custom_savings_percentage?: number;
+}
+
+export interface CreateBudgetFromHistoryRequest {
+  name: string;
+  budget_start_date: string;
+  income?: number;
+  rule_type?: "fifty_thirty_twenty" | "custom" | "manual_custom";
+  custom_needs_percentage?: number;
+  custom_wants_percentage?: number;
+  custom_savings_percentage?: number;
+}
+
+export interface HistoryAnalysisQueryOptions {
+  analysisStartDate?: string;
+  analysisEndDate?: string;
 }
 
 // Budget Generation Types
@@ -446,9 +499,23 @@ export interface BudgetReport {
   category_breakdown?: Array<{
     category_id: string;
     category_name: string;
+    category_type?: string;
     budgeted: number;
     spent: number;
     deviation: number;
+  }>;
+  breakdowns?: Array<{
+    id?: string;
+    budget_report_id?: string;
+    category_id: string;
+    category_name: string;
+    category_type: string;
+    budgeted_amount: number;
+    actual_amount: number;
+    deviation?: number;
+    deviation_percentage?: number;
+    transaction_count?: number;
+    created_at?: string;
   }>;
   summary?: string;
   created_at: string;
@@ -529,6 +596,67 @@ export interface CalculateScenarioData {
   savings_percentage?: number;
   // UI-only fields (not sent to backend)
   expense_changes?: Record<string, number>;
+}
+
+// Scenario Event Types
+export interface ScenarioEvent {
+  id: string;
+  scenario_id: string;
+  event_type: string;
+  effective_date: string;
+  recurrence_rule?: string | null;
+  payload_json?: Record<string, any> | null;
+  priority: number;
+  created_at: string;
+}
+
+export interface CreateScenarioEventData {
+  event_type: string;
+  effective_date: string;
+  recurrence_rule?: string;
+  payload_json?: Record<string, any>;
+  priority?: number;
+}
+
+export interface UpdateScenarioEventData {
+  event_type?: string;
+  effective_date?: string;
+  recurrence_rule?: string | null;
+  payload_json?: Record<string, any> | null;
+  priority?: number;
+}
+
+// Scenario Snapshot Types
+export interface ScenarioSnapshot {
+  id: string;
+  scenario_id: string;
+  month_index: number;
+  projected_income: number;
+  projected_expenses: number;
+  projected_savings: number;
+  emergency_fund_balance: number;
+  debt_balance: number;
+  goal_progress: number;
+  health_score: number;
+  created_at: string;
+}
+
+// Scenario Comparison Types
+export interface ScenarioComparison {
+  [scenarioId: string]: {
+    scenario: {
+      id: string;
+      name: string;
+      feasibility_score: number;
+    };
+    snapshots: ScenarioSnapshot[];
+  };
+}
+
+// Feasibility Types
+export interface FeasibilityScore {
+  scenario_id: string;
+  feasibility_score: number;
 }
 
 export interface ScenarioCalculation {
@@ -948,6 +1076,7 @@ function normalizeBudgetReport(report: any): BudgetReport {
       report.breakdowns?.map((b: any) => ({
         category_id: b.category_id,
         category_name: b.category_name,
+        category_type: b.category_type,
         budgeted: parseNumber(b.budgeted_amount),
         spent: parseNumber(b.actual_amount),
         deviation: parseNumber(b.deviation_percentage),
@@ -1129,6 +1258,30 @@ export const api = {
         body: JSON.stringify(data),
       },
     );
+  },
+
+  async getTransactionAnalysis(
+    params?: TransactionParams,
+  ): Promise<TransactionAnalysis> {
+    const queryParams = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== "") {
+          queryParams.append(key, String(value));
+        }
+      });
+    }
+    const query = queryParams.toString();
+    const data = await fetchWithAuth<TransactionAnalysis>(
+      `/api/transactions/analysis${query ? `?${query}` : ""}`,
+    );
+    return {
+      ...data,
+      total_income: parseNumber(data.total_income),
+      total_expenses: parseNumber(data.total_expenses),
+      net: parseNumber(data.net),
+      avg_daily_expense: parseNumber(data.avg_daily_expense),
+    };
   },
 
   // Upload APIs
@@ -1362,13 +1515,24 @@ export const api = {
 
   async getBudgetHistoryAnalysis(
     budgetId: string,
+    options?: HistoryAnalysisQueryOptions,
   ): Promise<BudgetAnalysisResponse> {
+    const queryParams = new URLSearchParams();
+    if (options?.analysisStartDate) {
+      queryParams.set("analysis_start_date", options.analysisStartDate);
+    }
+    if (options?.analysisEndDate) {
+      queryParams.set("analysis_end_date", options.analysisEndDate);
+    }
+
+    const query = queryParams.toString();
     const analysis = await fetchWithAuth<any>(
-      `/api/budgets/${budgetId}/history-analysis`,
+      `/api/budgets/${budgetId}/history-analysis${query ? `?${query}` : ""}`,
     );
     return {
       ...analysis,
       analysis_id: analysis.analysis_id ?? "",
+      budget_id: analysis.budget_id ?? undefined,
       budget_name: analysis.budget_name ?? "",
       total_spending: parseNumber(analysis.total_spending),
       needs_total: parseNumber(analysis.needs_total),
@@ -1378,6 +1542,51 @@ export const api = {
       wants_percentage: parseNumber(analysis.wants_percentage),
       savings_percentage: parseNumber(analysis.savings_percentage),
     } as BudgetAnalysisResponse;
+  },
+
+  async exportBudgetHistoryAnalysisCsv(budgetId: string): Promise<Blob> {
+    const token = getToken();
+    const headers: HeadersInit = {};
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(
+      `${API_URL}/api/budgets/${budgetId}/history-analysis/export.csv`,
+      {
+        method: "GET",
+        headers,
+      },
+    );
+
+    if (!response.ok) {
+      const error = await response
+        .json()
+        .catch(() => ({ detail: "Failed to export historical analysis" }));
+      throw new ApiError(
+        response.status,
+        error.detail || "Failed to export historical analysis",
+      );
+    }
+
+    return response.blob();
+  },
+
+  async createBudgetFromHistoryAnalysis(
+    budgetId: string,
+    data: CreateBudgetFromHistoryRequest,
+  ): Promise<Budget> {
+    const budget = await fetchWithAuth<any>(
+      `/api/budgets/${budgetId}/history-analysis/create-budget`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...data,
+          rule_type: data.rule_type ?? "custom",
+        }),
+      },
+    );
+    return transformBackendBudget(budget);
   },
 
   async updateBudget(id: string, data: UpdateBudgetData): Promise<Budget> {
@@ -1883,6 +2092,84 @@ export const api = {
       {
         method: "PATCH",
         body: JSON.stringify(data || { days: 7 }),
+      },
+    );
+  },
+
+  // Scenario Events
+  async createScenarioEvent(
+    scenarioId: string,
+    data: CreateScenarioEventData,
+  ): Promise<ScenarioEvent> {
+    return fetchWithAuth<ScenarioEvent>(
+      `/api/scenarios/${scenarioId}/events`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    );
+  },
+
+  async listScenarioEvents(scenarioId: string): Promise<ScenarioEvent[]> {
+    return fetchWithAuth<ScenarioEvent[]>(
+      `/api/scenarios/${scenarioId}/events`,
+    );
+  },
+
+  async updateScenarioEvent(
+    scenarioId: string,
+    eventId: string,
+    data: UpdateScenarioEventData,
+  ): Promise<ScenarioEvent> {
+    return fetchWithAuth<ScenarioEvent>(
+      `/api/scenarios/${scenarioId}/events/${eventId}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(data),
+      },
+    );
+  },
+
+  async deleteScenarioEvent(
+    scenarioId: string,
+    eventId: string,
+  ): Promise<void> {
+    return fetchWithAuth<void>(
+      `/api/scenarios/${scenarioId}/events/${eventId}`,
+      {
+        method: "DELETE",
+      },
+    );
+  },
+
+  // Scenario Simulation
+  async simulateScenario(scenarioId: string): Promise<ScenarioSnapshot[]> {
+    return fetchWithAuth<ScenarioSnapshot[]>(
+      `/api/scenarios/${scenarioId}/simulate`,
+      {
+        method: "POST",
+      },
+    );
+  },
+
+  async compareScenarios(
+    scenarioId: string,
+    comparisonScenarioIds: string[],
+  ): Promise<ScenarioComparison> {
+    return fetchWithAuth<ScenarioComparison>(
+      `/api/scenarios/${scenarioId}/compare`,
+      {
+        method: "POST",
+        body: JSON.stringify({ comparison_scenario_ids: comparisonScenarioIds }),
+      },
+    );
+  },
+
+  async computeFeasibility(scenarioId: string): Promise<FeasibilityScore> {
+    return fetchWithAuth<FeasibilityScore>(
+      `/api/scenarios/${scenarioId}/feasibility`,
+      {
+        method: "POST",
       },
     );
   },

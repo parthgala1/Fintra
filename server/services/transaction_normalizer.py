@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional, Union
 from uuid import UUID
 
 from models.transaction import TransactionType
+from services.transfer_detector import detect_direction, DetectionConfidence
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,17 @@ def normalize_transaction(raw_data: Dict[str, Any]) -> Dict[str, Any]:
     # Determine transaction type
     transaction_type = determine_transaction_type(amount, description)
     
-    # Normalize amount (ensure negative for expenses)
+    # Stage 1: Hierarchical direction detection using heuristics
+    direction_result = detect_direction(
+        description=description,
+        amount=float(amount),
+        legacy_transaction_type=transaction_type.value,
+    )
+    direction_type = direction_result.direction_type
+    # Flag for review if direction is only low-confidence
+    needs_review = direction_result.confidence == DetectionConfidence.LOW
+    
+    # Normalize amount (ensure positive absolute value stored, direction encoded separately)
     if transaction_type == TransactionType.EXPENSE:
         amount = abs(float(amount))
     elif transaction_type == TransactionType.INCOME:
@@ -89,6 +100,13 @@ def normalize_transaction(raw_data: Dict[str, Any]) -> Dict[str, Any]:
         "merchant_name": merchant_name,
         "amount": amount,
         "transaction_type": transaction_type,
+        # Hierarchical classification fields
+        "direction_type": direction_type,
+        "bucket_type": "none",           # Filled by classification engine (Stage 2/3)
+        "confidence_score": None,         # Filled by classification engine
+        "classification_source": None,    # Filled by classification engine
+        "needs_review": needs_review,
+        "user_verified": False,
         "currency": raw_data.get("currency", "INR"),
         "balance": raw_data.get("balance"),  # Optional
         "raw_data": raw_data,  # Keep original for debugging

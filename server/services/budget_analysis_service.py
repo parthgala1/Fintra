@@ -15,6 +15,7 @@ from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from models import BudgetHistoryAnalysis, Category, CategoryType, Transaction, TransactionType
+from models.transaction import DirectionType
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,123 @@ class BudgetAnalysisService:
     - Format breakdown for display
     - Store analysis results
     """
+
+    @staticmethod
+    def _run_analysis_for_period(
+        db: Session,
+        user_id: UUID,
+        analysis_start_date: date,
+        analysis_end_date: date,
+    ) -> Dict:
+        """Analyze spending inside an explicit [start, end] date range."""
+        logger.debug(
+            "[BudgetAnalysis] START period analysis: user=%s, start=%s, end=%s",
+            user_id,
+            analysis_start_date,
+            analysis_end_date,
+        )
+
+        if analysis_start_date > analysis_end_date:
+            logger.error(
+                "[BudgetAnalysis] Invalid date range: %s > %s",
+                analysis_start_date,
+                analysis_end_date,
+            )
+            raise ValueError("Invalid date range: start date must be before or equal to end date.")
+
+        # `transaction_date` is stored as datetime, so use full-day boundaries.
+        start_dt = datetime.combine(analysis_start_date, datetime.min.time())
+        end_dt = datetime.combine(analysis_end_date, datetime.max.time())
+
+        # Check that there are expense transactions in budget categories (required for analysis)
+        expense_count = (
+            db.query(func.count(Transaction.id))
+            .join(Category, Transaction.category_id == Category.id)
+            .filter(
+                and_(
+                    Transaction.user_id == user_id,
+                    Transaction.transaction_type == TransactionType.EXPENSE,
+                    Transaction.direction_type != DirectionType.TRANSFER,
+                    Transaction.transaction_date >= start_dt,
+                    Transaction.transaction_date <= end_dt,
+                    Category.category_type.in_([CategoryType.NEEDS, CategoryType.WANTS, CategoryType.SAVINGS]),
+                )
+            )
+            .scalar() or 0
+        )
+
+        logger.debug("[BudgetAnalysis] Found %s expense transactions in budget categories", expense_count)
+
+        if expense_count == 0:
+            logger.error("[BudgetAnalysis] No expense transactions in analysis period")
+            raise ValueError(
+                "No expense transactions found in selected analysis period. Cannot analyze spending."
+            )
+
+        # Total activity count (expense + income in budget categories) for data quality
+        total_transactions = (
+            db.query(func.count(Transaction.id))
+            .join(Category, Transaction.category_id == Category.id)
+            .filter(
+                and_(
+                    Transaction.user_id == user_id,
+                    Transaction.transaction_type.in_([TransactionType.EXPENSE, TransactionType.INCOME]),
+                    Transaction.direction_type != DirectionType.TRANSFER,
+                    Transaction.transaction_date >= start_dt,
+                    Transaction.transaction_date <= end_dt,
+                    Category.category_type.in_([CategoryType.NEEDS, CategoryType.WANTS, CategoryType.SAVINGS]),
+                )
+            )
+            .scalar() or 0
+        )
+
+        category_totals = BudgetAnalysisService._calculate_category_totals(
+            db, user_id, start_dt, end_dt
+        )
+
+        needs_total = category_totals.get("needs", Decimal("0"))
+        wants_total = category_totals.get("wants", Decimal("0"))
+        savings_total = category_totals.get("savings", Decimal("0"))
+        total_spending = needs_total + wants_total + savings_total
+
+        if total_spending > 0:
+            needs_percentage = (needs_total / total_spending * Decimal("100")).quantize(Decimal("0.01"))
+            wants_percentage = (wants_total / total_spending * Decimal("100")).quantize(Decimal("0.01"))
+            savings_percentage = (savings_total / total_spending * Decimal("100")).quantize(Decimal("0.01"))
+        else:
+            needs_percentage = Decimal("0.00")
+            wants_percentage = Decimal("0.00")
+            savings_percentage = Decimal("0.00")
+
+        category_breakdown = BudgetAnalysisService._build_category_breakdown(
+            db, user_id, start_dt, end_dt, total_spending
+        )
+
+        data_quality = BudgetAnalysisService._assess_data_quality(total_transactions)
+        validation_warnings = BudgetAnalysisService._validate_analysis(
+            total_transactions,
+            total_spending,
+            needs_percentage,
+            wants_percentage,
+            savings_percentage,
+        )
+
+        logger.debug("[BudgetAnalysis] SUCCESS period analysis")
+        return {
+            "analysis_start_date": analysis_start_date,
+            "analysis_end_date": analysis_end_date,
+            "total_spending": total_spending.quantize(Decimal("0.01")),
+            "needs_total": needs_total.quantize(Decimal("0.01")),
+            "wants_total": wants_total.quantize(Decimal("0.01")),
+            "savings_total": savings_total.quantize(Decimal("0.01")),
+            "needs_percentage": needs_percentage,
+            "wants_percentage": wants_percentage,
+            "savings_percentage": savings_percentage,
+            "category_breakdown": category_breakdown,
+            "total_transactions": total_transactions,
+            "data_quality": data_quality,
+            "validation_warnings": validation_warnings,
+        }
 
     @staticmethod
     def _json_safe_value(value):
@@ -129,99 +247,27 @@ class BudgetAnalysisService:
                 f"Invalid date range. Budget start {budget_start_date} is too close to first transaction {analysis_start_date}."
             )
         
-        # Step 2: Query transactions for analysis period
-        logger.debug(f"[BudgetAnalysis] Querying transactions...")
+        return BudgetAnalysisService._run_analysis_for_period(
+            db=db,
+            user_id=user_id,
+            analysis_start_date=analysis_start_date,
+            analysis_end_date=analysis_end_date,
+        )
 
-        # `transaction_date` is stored as datetime, so use full-day boundaries.
-        start_dt = datetime.combine(analysis_start_date, datetime.min.time())
-        end_dt = datetime.combine(analysis_end_date, datetime.max.time())
-        
-        transactions = (
-            db.query(Transaction)
-            .filter(
-                and_(
-                    Transaction.user_id == user_id,
-                    Transaction.transaction_type == TransactionType.EXPENSE,
-                    Transaction.transaction_date >= start_dt,
-                    Transaction.transaction_date <= end_dt,
-                )
-            )
-            .all()
+    @staticmethod
+    def analyze_spending_for_range(
+        db: Session,
+        user_id: UUID,
+        analysis_start_date: date,
+        analysis_end_date: date,
+    ) -> Dict:
+        """Analyze historical spending for a user-selected explicit period."""
+        return BudgetAnalysisService._run_analysis_for_period(
+            db=db,
+            user_id=user_id,
+            analysis_start_date=analysis_start_date,
+            analysis_end_date=analysis_end_date,
         )
-        
-        total_transactions = len(transactions)
-        logger.debug(f"[BudgetAnalysis] Found {total_transactions} expense transactions")
-        
-        if total_transactions == 0:
-            logger.error(f"[BudgetAnalysis] No expense transactions in analysis period")
-            raise ValueError(
-                "No expense transactions found in analysis period. Cannot analyze spending."
-            )
-        
-        # Step 3: Calculate totals by category type
-        category_totals = BudgetAnalysisService._calculate_category_totals(
-            db, user_id, start_dt, end_dt
-        )
-        
-        needs_total = category_totals.get("needs", Decimal("0"))
-        wants_total = category_totals.get("wants", Decimal("0"))
-        savings_total = category_totals.get("savings", Decimal("0"))
-        
-        total_spending = needs_total + wants_total + savings_total
-        
-        logger.debug(
-            f"[BudgetAnalysis] Totals: Needs={needs_total}, Wants={wants_total}, "
-            f"Savings={savings_total}, Total={total_spending}"
-        )
-        
-        # Step 4: Calculate percentages
-        if total_spending > 0:
-            needs_percentage = (needs_total / total_spending * Decimal("100")).quantize(Decimal("0.01"))
-            wants_percentage = (wants_total / total_spending * Decimal("100")).quantize(Decimal("0.01"))
-            savings_percentage = (savings_total / total_spending * Decimal("100")).quantize(Decimal("0.01"))
-        else:
-            needs_percentage = Decimal("0.00")
-            wants_percentage = Decimal("0.00")
-            savings_percentage = Decimal("0.00")
-        
-        logger.debug(
-            f"[BudgetAnalysis] Percentages: Needs={needs_percentage}%, "
-            f"Wants={wants_percentage}%, Savings={savings_percentage}%"
-        )
-        
-        # Step 5: Build detailed category breakdown
-        category_breakdown = BudgetAnalysisService._build_category_breakdown(
-            db, user_id, start_dt, end_dt, total_spending
-        )
-        
-        # Step 6: Validate data quality and build warnings
-        data_quality = BudgetAnalysisService._assess_data_quality(total_transactions)
-        validation_warnings = BudgetAnalysisService._validate_analysis(
-            total_transactions, total_spending, needs_percentage, wants_percentage,
-            savings_percentage
-        )
-        
-        logger.debug(f"[BudgetAnalysis] Data quality: {data_quality}, Warnings: {validation_warnings}")
-        
-        # Step 7: Build result
-        result = {
-            "analysis_start_date": analysis_start_date,
-            "analysis_end_date": analysis_end_date,
-            "total_spending": total_spending.quantize(Decimal("0.01")),
-            "needs_total": needs_total.quantize(Decimal("0.01")),
-            "wants_total": wants_total.quantize(Decimal("0.01")),
-            "savings_total": savings_total.quantize(Decimal("0.01")),
-            "needs_percentage": needs_percentage,
-            "wants_percentage": wants_percentage,
-            "savings_percentage": savings_percentage,
-            "category_breakdown": category_breakdown,
-            "total_transactions": total_transactions,
-            "data_quality": data_quality,
-            "validation_warnings": validation_warnings,
-        }
-        
-        logger.debug(f"[BudgetAnalysis] SUCCESS")
-        return result
     
     @staticmethod
     def _calculate_category_totals(
@@ -234,13 +280,14 @@ class BudgetAnalysisService:
         totals = {}
         
         for category_type in [CategoryType.NEEDS, CategoryType.WANTS, CategoryType.SAVINGS]:
-            result = (
+            expense_result = (
                 db.query(func.sum(Transaction.amount))
                 .join(Category, Transaction.category_id == Category.id)
                 .filter(
                     and_(
                         Transaction.user_id == user_id,
                         Transaction.transaction_type == TransactionType.EXPENSE,
+                        Transaction.direction_type != DirectionType.TRANSFER,
                         Category.category_type == category_type,
                         Transaction.transaction_date >= start_date,
                         Transaction.transaction_date <= end_date,
@@ -248,9 +295,32 @@ class BudgetAnalysisService:
                 )
                 .scalar()
             )
-            
-            totals[category_type.value] = Decimal(str(result)) if result else Decimal("0")
-        
+            income_result = (
+                db.query(func.sum(Transaction.amount))
+                .join(Category, Transaction.category_id == Category.id)
+                .filter(
+                    and_(
+                        Transaction.user_id == user_id,
+                        Transaction.transaction_type == TransactionType.INCOME,
+                        Transaction.direction_type != DirectionType.TRANSFER,
+                        Category.category_type == category_type,
+                        Transaction.transaction_date >= start_date,
+                        Transaction.transaction_date <= end_date,
+                    )
+                )
+                .scalar()
+            )
+            gross = Decimal(str(expense_result)) if expense_result else Decimal("0")
+            refunds = Decimal(str(income_result)) if income_result else Decimal("0")
+            logger.debug(
+                "[BudgetAnalysis] %s: gross_expense=%s, category_income=%s, net=%s",
+                category_type.value,
+                gross,
+                refunds,
+                max(gross - refunds, Decimal("0")),
+            )
+            totals[category_type.value] = max(gross - refunds, Decimal("0"))
+
         return totals
     
     @staticmethod
@@ -268,8 +338,8 @@ class BudgetAnalysisService:
             "Savings": {},
         }
         
-        # Query all categories with transactions in the period
-        results = (
+        # Query expense totals per budget category
+        expense_rows = (
             db.query(
                 Category.id,
                 Category.name,
@@ -277,39 +347,76 @@ class BudgetAnalysisService:
                 Category.icon,
                 Category.color,
                 func.sum(Transaction.amount).label("total"),
-                func.count(Transaction.id).label("transaction_count"),
+                func.count(Transaction.id).label("expense_count"),
             )
             .join(Transaction, Transaction.category_id == Category.id)
             .filter(
                 and_(
                     Transaction.user_id == user_id,
                     Transaction.transaction_type == TransactionType.EXPENSE,
+                    Transaction.direction_type != DirectionType.TRANSFER,
                     Transaction.transaction_date >= start_date,
                     Transaction.transaction_date <= end_date,
+                    Category.category_type.in_([CategoryType.NEEDS, CategoryType.WANTS, CategoryType.SAVINGS]),
                 )
             )
             .group_by(Category.id, Category.name, Category.category_type, Category.icon, Category.color)
             .order_by(func.sum(Transaction.amount).desc())
             .all()
         )
-        
-        # Organize by category type
-        for row in results:
+
+        # Query income totals per budget category (refunds / Splitwise settlements)
+        income_rows = (
+            db.query(
+                Transaction.category_id,
+                func.sum(Transaction.amount).label("total"),
+                func.count(Transaction.id).label("income_count"),
+            )
+            .join(Category, Transaction.category_id == Category.id)
+            .filter(
+                and_(
+                    Transaction.user_id == user_id,
+                    Transaction.transaction_type == TransactionType.INCOME,
+                    Transaction.direction_type != DirectionType.TRANSFER,
+                    Transaction.transaction_date >= start_date,
+                    Transaction.transaction_date <= end_date,
+                    Category.category_type.in_([CategoryType.NEEDS, CategoryType.WANTS, CategoryType.SAVINGS]),
+                )
+            )
+            .group_by(Transaction.category_id)
+            .all()
+        )
+        income_by_category: Dict = {
+            row.category_id: (Decimal(str(row.total)), row.income_count)
+            for row in income_rows
+        }
+
+        # Organize by category type using net amounts
+        for row in expense_rows:
             category_type = row.category_type.value.title()
-            # Only include budget-relevant types; skip Transfer, Income, Expense, Both
             if category_type not in breakdown:
                 continue
-            total = Decimal(str(row.total))
-            percentage = (total / total_spending * Decimal("100")).quantize(Decimal("0.01")) if total_spending > 0 else Decimal("0.00")
-            
+            gross = Decimal(str(row.total))
+            refund_data = income_by_category.get(row.id, (Decimal("0"), 0))
+            refunds = refund_data[0]
+            income_count = refund_data[1]
+            net = max(gross - refunds, Decimal("0"))
+            logger.debug(
+                "[BudgetAnalysis] %s: gross_expense=%s, category_income=%s, net=%s",
+                row.name,
+                gross,
+                refunds,
+                net,
+            )
+            percentage = (net / total_spending * Decimal("100")).quantize(Decimal("0.01")) if total_spending > 0 else Decimal("0.00")
             breakdown[category_type][row.name] = {
-                "amount": total.quantize(Decimal("0.01")),
+                "amount": net.quantize(Decimal("0.01")),
                 "percentage": percentage,
                 "icon": row.icon or "",
                 "color": row.color or "#6B7280",
-                "transaction_count": row.transaction_count,
+                "transaction_count": row.expense_count + income_count,
             }
-        
+
         return breakdown
     
     @staticmethod

@@ -1,11 +1,11 @@
 """
 Classification engine service for categorizing transactions.
 
-Uses a multi-stage classification approach:
-1. Rule-based classification (CategoryMapping)
-2. Keyword matching (fuzzy search)
-3. AI classification (LLM) - with learning capabilities
-4. Uncategorized fallback
+Uses a multi-stage hierarchical classification approach:
+Stage 1: Direction detection (transfer_detector.py heuristics)
+Stage 2: Bucket inference (needs/wants/savings) — for expenses
+Stage 3: Semantic category matching (rule → AI → keyword)
+Stage 4: Confidence thresholding → Misc Needs/Wants/Savings fallback
 
 Phase 1 Optimizations:
 - Auto-learns rules from successful AI classifications
@@ -22,6 +22,7 @@ from uuid import UUID
 
 from fuzzywuzzy import fuzz
 from sqlalchemy.orm import Session
+from services.validation import validate_transaction_classification
 
 from config import settings
 
@@ -60,42 +61,507 @@ def classify_transaction(
     user_id: UUID,
 ) -> UUID:
     """
-    Classify a transaction using the multi-stage fallback approach.
+    Legacy single-category classification. Kept for backward compatibility.
+    New code should call classify_transaction_hierarchical() instead.
+    """
+    return classify_transaction_hierarchical(db, transaction, user_id)["category_id"]
+
+
+# ── Confidence threshold ──────────────────────────────────────────────────────
+# If the AI semantic classification confidence is below this value, fall back
+# to the appropriate Misc category (Misc Needs / Misc Wants / Misc Savings).
+SEMANTIC_CONFIDENCE_THRESHOLD = 0.60
+
+
+def classify_transaction_hierarchical(
+    db: Session,
+    transaction: Dict[str, Any],
+    user_id: UUID,
+) -> Dict[str, Any]:
+    """
+    Hierarchical 4-stage transaction classification.
+
+    Stage 1: Direction (income / expense / transfer / refund / adjustment)
+             Uses transfer_detector heuristics + any direction already set
+             by the normalizer (direction_type field in transaction dict).
+
+    Stage 2: Bucket inference (needs / wants / savings / none)
+             Only applies to expense and refund transactions.
+             Inferred by asking AI to pick a bucket if the semantic
+             category is found first; otherwise set to 'none'.
+
+    Stage 3: Semantic category matching
+             For transfers and income → dedicated system categories
+             For expenses → rule-based → AI → keyword → Misc bucket fallback
+
+    Stage 4: Confidence thresholding
+             If confidence < SEMANTIC_CONFIDENCE_THRESHOLD for an AI-classified
+             expense, fall back to the appropriate Misc Needs/Wants/Savings
+             category (bucket must already be determined).
+
+    Returns:
+        Dict with keys:
+          - category_id      (UUID)
+          - direction_type   (str)
+          - bucket_type      (str)
+          - confidence_score (float | None)
+          - classification_source (str)
+          - needs_review     (bool)
+    """
+    from models.category import Category, CategoryType
+    from services.transfer_detector import detect_direction, DetectionConfidence
+
+    description = transaction.get("description", "")
+    amount = transaction.get("amount", 0.0)
+    legacy_type = (transaction.get("transaction_type") or "").value if hasattr(
+        transaction.get("transaction_type"), "value") else str(transaction.get("transaction_type") or "")
+
+    logger.debug(f"Hierarchical classification: {description}")
+
+    # ── Stage 1: Direction detection ─────────────────────────────────────────
+    # Prefer direction already set by normalizer; otherwise detect again
+    direction_type: str = transaction.get("direction_type") or ""
+    needs_review: bool = transaction.get("needs_review", False)
+
+    if not direction_type:
+        dir_result = detect_direction(description, float(amount), legacy_type)
+        direction_type = dir_result.direction_type
+        needs_review = dir_result.confidence == DetectionConfidence.LOW
+
+    # ── Stage 2: Short-circuit for transfers and income ───────────────────────
+    if direction_type == "transfer":
+        cat_id = _get_transfer_category(db, user_id)
+        return {
+            "category_id": cat_id,
+            "direction_type": "transfer",
+            "bucket_type": "none",
+            "confidence_score": 1.0,
+            "classification_source": "rule",
+            "needs_review": False,
+        }
+
+    if direction_type in ("income",):
+        cat_id = _get_income_category(db, user_id, description)
+        return {
+            "category_id": cat_id,
+            "direction_type": "income",
+            "bucket_type": "none",
+            "confidence_score": 0.9,
+            "classification_source": "rule",
+            "needs_review": needs_review,
+        }
+
+    if direction_type == "refund":
+        # Refunds reduce spending in the same bucket — classify like an expense
+        # but flag direction as refund
+        result = _classify_expense(db, transaction, user_id, description, float(amount))
+        result["direction_type"] = "refund"
+        _apply_classification_validation(result)
+        return result
+
+    # ── Expense (and adjustment) path ─────────────────────────────────────────
+    result = _classify_expense(db, transaction, user_id, description, float(amount))
+    result["direction_type"] = direction_type
+    result["needs_review"] = result.get("needs_review", False) or needs_review
+    _apply_classification_validation(result)
+    return result
+
+
+def _apply_classification_validation(result: Dict[str, Any]) -> None:
+    """Apply validate_transaction_classification to a classification result dict, logging any violations."""
+    try:
+        validate_transaction_classification(
+            direction_type=result.get("direction_type"),
+            bucket_type=result.get("bucket_type"),
+        )
+    except ValueError as exc:
+        logger.warning("Classification integrity violation (auto-corrected): %s", exc)
+        # Auto-correct: reset bucket to 'none' if direction is transfer or income
+        direction = (result.get("direction_type") or "").lower()
+        if direction in ("transfer", "income"):
+            result["bucket_type"] = "none"
+
+
+def _get_transfer_category(db: Session, user_id: UUID) -> UUID:
+    """Return user's Bank Transfer category, or a Misc Needs fallback."""
+    from models.category import Category, CategoryType
+
+    # Try user's Bank Transfer category first, then system
+    cat = (
+        db.query(Category)
+        .filter(
+            Category.user_id == user_id,
+            Category.name.ilike("bank transfer"),
+        )
+        .first()
+    )
+    if cat:
+        return cat.id
+
+    system_cat = (
+        db.query(Category)
+        .filter(Category.is_system == True, Category.name.ilike("bank transfer"))  # noqa: E712
+        .first()
+    )
+    if system_cat:
+        return system_cat.id
+
+    # If Bank Transfer doesn't exist (unlikely after seed), create Misc Needs as fallback
+    return get_or_create_misc_category(db, user_id, "needs")
+
+
+def _get_income_category(db: Session, user_id: UUID, description: str) -> UUID:
+    """Return best matching income category for user."""
+    from models.category import Category, CategoryType
+
+    # Try rule-based first
+    cat_id = apply_rule_based_classification(db, description, 0, user_id)
+    if cat_id:
+        cat = db.get(Category, cat_id)
+        if cat and cat.category_type == CategoryType.INCOME:
+            return cat_id
+
+    # Look for Salary category
+    salary = (
+        db.query(Category)
+        .filter(
+            Category.user_id == user_id,
+            Category.name.ilike("salary"),
+            Category.is_active == True,  # noqa: E712
+        )
+        .first()
+    )
+    if salary:
+        return salary.id
+
+    # Any active income category
+    income_cat = (
+        db.query(Category)
+        .filter(
+            Category.user_id == user_id,
+            Category.category_type == CategoryType.INCOME,
+            Category.is_active == True,  # noqa: E712
+        )
+        .first()
+    )
+    if income_cat:
+        return income_cat.id
+
+    # Last resort: create a generic Income category
+    from models.category import Category
+    new_cat = Category(
+        user_id=user_id,
+        name="Income",
+        category_type=CategoryType.INCOME,
+        icon="money-bill",
+        color="#28a745",
+        description="Income and credits",
+        is_system=False,
+        bucket_type="none",
+    )
+    db.add(new_cat)
+    db.commit()
+    db.refresh(new_cat)
+    return new_cat.id
+
+
+def _classify_expense(
+    db: Session,
+    transaction: Dict[str, Any],
+    user_id: UUID,
+    description: str,
+    amount: float,
+) -> Dict[str, Any]:
+    """
+    Classify an expense transaction through the rule → AI → keyword → Misc pipeline.
+
+    Returns a classification result dict.
+    """
+    # Stage 3a: Rule-based
+    cat_id = apply_rule_based_classification(db, description, amount, user_id)
+    if cat_id:
+        bucket = _category_bucket(db, cat_id)
+        return {
+            "category_id": cat_id,
+            "direction_type": "expense",
+            "bucket_type": bucket,
+            "confidence_score": 1.0,
+            "classification_source": "rule",
+            "needs_review": False,
+        }
+
+    # Stage 3b: AI classification (single JSON-mode call)
+    if settings.AI_CLASSIFICATION_ENABLED:
+        ai_result = apply_ai_classification_hierarchical(db, description, amount, user_id)
+        if ai_result:
+            cat_id = ai_result["category_id"]
+            confidence = ai_result.get("confidence_score", 0.0)
+            bucket = _category_bucket(db, cat_id)
+
+            # Stage 4: Confidence thresholding
+            if confidence < SEMANTIC_CONFIDENCE_THRESHOLD:
+                misc_id = get_or_create_misc_category(db, user_id, bucket or "needs")
+                return {
+                    "category_id": misc_id,
+                    "direction_type": "expense",
+                    "bucket_type": bucket or "needs",
+                    "confidence_score": confidence,
+                    "classification_source": "ai",
+                    "needs_review": True,
+                }
+
+            return {
+                "category_id": cat_id,
+                "direction_type": "expense",
+                "bucket_type": bucket,
+                "confidence_score": confidence,
+                "classification_source": "ai",
+                "needs_review": confidence < 0.80,
+            }
+
+    # Stage 3c: Keyword (fuzzy) matching
+    cat_id = apply_keyword_matching_safe(db, description, user_id)
+    if cat_id:
+        bucket = _category_bucket(db, cat_id)
+        return {
+            "category_id": cat_id,
+            "direction_type": "expense",
+            "bucket_type": bucket,
+            "confidence_score": 0.65,
+            "classification_source": "keyword",
+            "needs_review": False,
+        }
+
+    # Stage 4 fallback: Misc Needs (bucket unknown — no signal)
+    misc_id = get_or_create_misc_category(db, user_id, "needs")
+    return {
+        "category_id": misc_id,
+        "direction_type": "expense",
+        "bucket_type": "needs",
+        "confidence_score": 0.0,
+        "classification_source": "system",
+        "needs_review": True,
+    }
+
+
+def _category_bucket(db: Session, category_id: UUID) -> str:
+    """Return the bucket_type string for a category ('needs'/'wants'/'savings'/'none')."""
+    from models.category import Category
+
+    cat = db.get(Category, category_id)
+    if not cat:
+        return "none"
+    if cat.bucket_type:
+        return cat.bucket_type
+    # Derive from category_type
+    mapping = {"needs": "needs", "wants": "wants", "savings": "savings"}
+    return mapping.get(cat.category_type.value if hasattr(cat.category_type, "value") else str(cat.category_type), "none")
+
+
+def apply_ai_classification_hierarchical(
+    db: Session,
+    description: str,
+    amount: float,
+    user_id: UUID,
+) -> Optional[Dict[str, Any]]:
+    """
+    Hierarchical AI classification via a single JSON-mode Groq prompt.
+
+    Asks the model to return:
+      {
+        "category": "<exact category name>",
+        "confidence": 0.0 – 1.0
+      }
+
+    Returns dict with category_id and confidence_score, or None on failure.
+    """
+    if not settings.AI_API_KEY:
+        return None
+
+    try:
+        from groq import Groq
+        from models.category import Category
+
+        # Active, non-misc user categories
+        categories = (
+            db.query(Category)
+            .filter(
+                Category.user_id == user_id,
+                Category.is_active == True,  # noqa: E712
+                Category.is_misc_category == False,  # noqa: E712
+            )
+            .all()
+        )
+        category_names = [c.name for c in categories if c.category_type.value not in ("transfer", "income")]
+
+        if not category_names:
+            return None
+
+        client = Groq(api_key=settings.AI_API_KEY)
+
+        system_prompt = (
+            "You are a financial transaction classifier. "
+            "Respond ONLY with a JSON object: "
+            '{"category": "<exact name>", "confidence": <0.0-1.0>}'
+        )
+        user_prompt = (
+            f"Categories: {', '.join(sorted(category_names))}\n\n"
+            f"Transaction: {description!r}  amount={amount}\n\n"
+            "Pick the single best category and estimate your confidence (0.0=guess, 1.0=certain)."
+        )
+
+        response = client.chat.completions.create(
+            model=settings.AI_MODEL_NAME,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=80,
+            temperature=0.0,
+        )
+
+        call_count = increment_api_calls()
+        logger.info(f"Groq API call #{call_count} (hierarchical)")
+
+        raw = response.choices[0].message.content.strip()
+        # Strip markdown code fences if present
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+
+        parsed = json.loads(raw)
+        category_name = str(parsed.get("category", "")).strip()
+        confidence = float(parsed.get("confidence", 0.5))
+        confidence = max(0.0, min(1.0, confidence))
+
+        # Find category by exact name
+        category_map = {c.name: c.id for c in categories}
+        cat_id = category_map.get(category_name)
+
+        if not cat_id:
+            # Fuzzy fallback
+            best_score = 0
+            for cname, cid in category_map.items():
+                score = fuzz.token_set_ratio(category_name.lower(), cname.lower())
+                if score > best_score:
+                    best_score = score
+                    cat_id = cid
+            if best_score < 60:
+                return None
+            # Penalise confidence for fuzzy match
+            confidence = confidence * (best_score / 100.0)
+
+        # Learn from high-confidence results
+        if settings.AI_LEARN_PATTERNS and confidence >= 0.80:
+            create_learned_rule(db, user_id, cat_id, description, amount=amount, confidence_score=confidence)
+
+        return {"category_id": cat_id, "confidence_score": confidence}
+
+    except ImportError:
+        logger.warning("groq package not installed")
+        return None
+    except Exception as e:
+        logger.error(f"Hierarchical AI classification error: {e}")
+        return None
+
+
+def get_or_create_misc_category(db: Session, user_id: UUID, bucket: str) -> UUID:
+    """
+    Return the appropriate Misc category (Misc Needs / Misc Wants / Misc Savings) for a user.
+    Creates the category if it doesn't exist yet.
     
     Args:
-        db: Database session
-        transaction: Normalized transaction data
+        db:      Database session
         user_id: User UUID
+        bucket:  'needs' | 'wants' | 'savings' (default: 'needs')
     
     Returns:
-        Category UUID
+        Misc category UUID
     """
-    description = transaction.get("description", "")
-    amount = transaction.get("amount", 0)
-    
-    logger.debug(f"Classifying transaction: {description}")
-    
-    # Stage 1: Rule-based classification
-    category_id = apply_rule_based_classification(db, description, amount, user_id)
-    if category_id:
-        logger.debug(f"Rule-based classification matched: {category_id}")
-        return category_id
-    
-    # Stage 2: AI classification (moved before fuzzy keyword matching for better accuracy)
-    if settings.AI_CLASSIFICATION_ENABLED:
-        category_id = apply_ai_classification(db, description, amount, user_id)
-        if category_id:
-            logger.debug(f"AI classification matched: {category_id}")
-            return category_id
-    
-    # Stage 3: Keyword matching
-    category_id = apply_keyword_matching(db, description, user_id)
-    if category_id:
-        logger.debug(f"Keyword matching matched: {category_id}")
-        return category_id
-    
-    # Stage 4: Uncategorized fallback
-    return get_or_create_uncategorized(db, user_id)
+    from models.category import Category, CategoryType
+
+    bucket = bucket if bucket in ("needs", "wants", "savings") else "needs"
+    name_map = {"needs": "Misc Needs", "wants": "Misc Wants", "savings": "Misc Savings"}
+    type_map = {"needs": CategoryType.NEEDS, "wants": CategoryType.WANTS, "savings": CategoryType.SAVINGS}
+    misc_name = name_map[bucket]
+
+    # User-specific first
+    misc = (
+        db.query(Category)
+        .filter(
+            Category.user_id == user_id,
+            Category.name == misc_name,
+        )
+        .first()
+    )
+    if misc:
+        return misc.id
+
+    # System category second
+    misc = (
+        db.query(Category)
+        .filter(
+            Category.is_system == True,  # noqa: E712
+            Category.name == misc_name,
+        )
+        .first()
+    )
+    if misc:
+        return misc.id
+
+    # Create for this user
+    misc = Category(
+        user_id=user_id,
+        name=misc_name,
+        category_type=type_map[bucket],
+        icon="question-circle",
+        color="#6b7280",
+        description=f"{bucket.title()} expense — bucket known, specific category uncertain",
+        is_system=False,
+        bucket_type=bucket,
+        is_misc_category=True,
+    )
+    db.add(misc)
+    db.commit()
+    db.refresh(misc)
+    logger.info(f"Created {misc_name} category for user {user_id}")
+    return misc.id
+
+
+def apply_keyword_matching_safe(db: Session, description: str, user_id: UUID) -> Optional[UUID]:
+    """
+    Keyword matching that skips Misc/inactive categories.
+    Wrapper around apply_keyword_matching with additional filter.
+    """
+    from models.category import Category
+
+    categories = (
+        db.query(Category)
+        .filter(
+            Category.user_id == user_id,
+            Category.is_active == True,  # noqa: E712
+            Category.is_misc_category == False,  # noqa: E712
+        )
+        .all()
+    )
+
+    if not categories:
+        return None
+
+    description_lower = description.lower()
+    best_match_id = None
+    best_score = 0
+
+    for category in categories:
+        category_words = category.name.lower().split()
+        for word in category_words:
+            if len(word) < 3:
+                continue
+            score = fuzz.partial_ratio(word, description_lower)
+            if score > best_score and score >= 70:
+                best_score = score
+                best_match_id = category.id
+
+    return best_match_id
 
 
 def apply_rule_based_classification(

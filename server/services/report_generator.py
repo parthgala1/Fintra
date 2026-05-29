@@ -15,10 +15,11 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from models.budget import Budget
+from models.budget_category import BudgetCategory
 from models.budget_category_breakdown import BudgetCategoryBreakdown
 from models.budget_report import BudgetReport
 from models.category import Category, CategoryType
-from models.transaction import Transaction, TransactionStatus, TransactionType
+from models.transaction import Transaction, TransactionStatus, TransactionType, DirectionType
 from services.budget_calculator import BudgetCalculator
 
 logger = logging.getLogger(__name__)
@@ -64,8 +65,8 @@ class ReportGenerator:
 
         category_ids = [c.id for c in categories]
 
-        # Sum transactions for these categories
-        result = (
+        # Gross expense total for these categories — exclude transfers
+        expense_result = (
             db.query(func.coalesce(func.sum(Transaction.amount), 0))
             .filter(
                 Transaction.user_id == user_id,
@@ -74,11 +75,30 @@ class ReportGenerator:
                 Transaction.transaction_date <= period_end,
                 Transaction.status == TransactionStatus.POSTED,
                 Transaction.transaction_type == TransactionType.EXPENSE,
+                # Exclude transactions that have been re-classified as transfers
+                Transaction.direction_type != DirectionType.TRANSFER,
             )
             .scalar()
         )
 
-        return Decimal(str(result)) if result else Decimal("0")
+        # Income in same categories (refunds / Splitwise settlements) — exclude transfers
+        income_result = (
+            db.query(func.coalesce(func.sum(Transaction.amount), 0))
+            .filter(
+                Transaction.user_id == user_id,
+                Transaction.category_id.in_(category_ids),
+                Transaction.transaction_date >= period_start,
+                Transaction.transaction_date <= period_end,
+                Transaction.status == TransactionStatus.POSTED,
+                Transaction.transaction_type == TransactionType.INCOME,
+                Transaction.direction_type != DirectionType.TRANSFER,
+            )
+            .scalar()
+        )
+
+        gross = Decimal(str(expense_result)) if expense_result else Decimal("0")
+        refunds = Decimal(str(income_result)) if income_result else Decimal("0")
+        return max(gross - refunds, Decimal("0"))
 
     @staticmethod
     def get_total_income(
@@ -290,7 +310,7 @@ class ReportGenerator:
         category_tx_counts: dict[UUID, int] = {}
         if categories:
             category_ids = [c.id for c in categories]
-            grouped = (
+            expense_grouped = (
                 db.query(
                     Transaction.category_id,
                     func.coalesce(func.sum(Transaction.amount), 0),
@@ -303,54 +323,61 @@ class ReportGenerator:
                     Transaction.transaction_date <= period_end,
                     Transaction.status == TransactionStatus.POSTED,
                     Transaction.transaction_type == TransactionType.EXPENSE,
+                    # Exclude transactions reclassified as transfers
+                    Transaction.direction_type != DirectionType.TRANSFER,
                 )
                 .group_by(Transaction.category_id)
                 .all()
             )
-            for category_id, total, tx_count in grouped:
-                category_actuals[category_id] = Decimal(str(total)) if total else Decimal("0")
-                category_tx_counts[category_id] = int(tx_count or 0)
+            income_grouped = (
+                db.query(
+                    Transaction.category_id,
+                    func.coalesce(func.sum(Transaction.amount), 0),
+                    func.count(Transaction.id),
+                )
+                .filter(
+                    Transaction.user_id == user_id,
+                    Transaction.category_id.in_(category_ids),
+                    Transaction.transaction_date >= period_start,
+                    Transaction.transaction_date <= period_end,
+                    Transaction.status == TransactionStatus.POSTED,
+                    Transaction.transaction_type == TransactionType.INCOME,
+                    Transaction.direction_type != DirectionType.TRANSFER,
+                )
+                .group_by(Transaction.category_id)
+                .all()
+            )
+            income_actuals = {row[0]: Decimal(str(row[1] or 0)) for row in income_grouped}
+            income_counts = {row[0]: int(row[2] or 0) for row in income_grouped}
+            for category_id, total, tx_count in expense_grouped:
+                gross = Decimal(str(total)) if total else Decimal("0")
+                refunds = income_actuals.get(category_id, Decimal("0"))
+                category_actuals[category_id] = max(gross - refunds, Decimal("0"))
+                category_tx_counts[category_id] = int(tx_count or 0) + income_counts.get(category_id, 0)
 
-        categories_by_type: dict[CategoryType, list[Category]] = {
-            CategoryType.NEEDS: [],
-            CategoryType.WANTS: [],
-            CategoryType.SAVINGS: [],
-        }
-        for category in categories:
-            categories_by_type[category.category_type].append(category)
-
-        type_budget_totals: dict[CategoryType, Decimal] = {
-            CategoryType.NEEDS: budget.needs_amount or Decimal("0"),
-            CategoryType.WANTS: budget.wants_amount or Decimal("0"),
-            CategoryType.SAVINGS: budget.savings_amount or Decimal("0"),
+        # Build per-category budget allocation lookup from BudgetCategory records
+        budget_category_rows = (
+            db.query(BudgetCategory)
+            .filter(BudgetCategory.budget_id == budget_id)
+            .all()
+        )
+        budget_alloc_by_category: dict[UUID, Decimal] = {
+            row.category_id: Decimal(str(row.budgeted_amount or 0))
+            for row in budget_category_rows
         }
 
         breakdowns = []
+
+        # Build per-category budget allocation lookup from BudgetCategory records
 
         for category in categories:
             actual_amount = category_actuals.get(category.id, Decimal("0"))
             transaction_count = category_tx_counts.get(category.id, 0)
 
-            category_type = category.category_type
-            typed_categories = categories_by_type.get(category_type, [])
-            type_budget_total = type_budget_totals.get(category_type, Decimal("0"))
-            type_actual_total = sum(
-                category_actuals.get(c.id, Decimal("0")) for c in typed_categories
-            )
-
-            # Allocate bucket budget per category:
-            # - weighted by actuals if there is spending in that type
-            # - otherwise split evenly across categories in that type
-            if type_budget_total <= 0 or not typed_categories:
-                budgeted_amount = Decimal("0")
-            elif type_actual_total > 0:
-                budgeted_amount = (type_budget_total * (actual_amount / type_actual_total)).quantize(
-                    Decimal("0.01"), rounding=ROUND_HALF_UP
-                )
-            else:
-                budgeted_amount = (type_budget_total / Decimal(len(typed_categories))).quantize(
-                    Decimal("0.01"), rounding=ROUND_HALF_UP
-                )
+            # Use the per-category budget allocation from BudgetCategory record.
+            # This is the explicit allocation set by the user (or auto-generated at
+            # budget creation time), NOT a dynamic runtime proportional calculation.
+            budgeted_amount = budget_alloc_by_category.get(category.id, Decimal("0"))
 
             deviation_data = BudgetCalculator.calculate_deviation(
                 budgeted_amount, actual_amount

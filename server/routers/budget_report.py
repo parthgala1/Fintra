@@ -27,6 +27,7 @@ from schemas.budget_report import (
     BreakdownResponse,
     ReportGenerate,
 )
+from services.budget_analysis_service import BudgetAnalysisService
 from services.budget_report_recalculation_service import BudgetReportRecalculationService
 
 logger = logging.getLogger(__name__)
@@ -268,6 +269,26 @@ def recalculate_current_report(
         period_start=period_start,
         period_end=period_end,
     )
+
+    # Keep historical analysis in sync so reports table reflects latest transactions.
+    try:
+        analysis_data = BudgetAnalysisService.analyze_spending(
+            db=db,
+            user_id=current_user.id,
+            budget_start_date=budget.start_date.date(),
+        )
+        BudgetAnalysisService.store_analysis(
+            db=db,
+            user_id=current_user.id,
+            budget_id=budget.id,
+            analysis_data=analysis_data,
+        )
+    except ValueError as exc:
+        logger.warning(
+            "Skipping history analysis refresh during report recalc for budget %s: %s",
+            budget_id,
+            exc,
+        )
 
     breakdowns = (
         db.query(BudgetCategoryBreakdown)

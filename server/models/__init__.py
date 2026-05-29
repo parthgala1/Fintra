@@ -12,6 +12,8 @@ from .budget_report import BudgetReport
 from .budget_category_breakdown import BudgetCategoryBreakdown
 from .budget_category import BudgetCategory
 from .budget_scenario import BudgetScenario
+from .scenario_event import ScenarioEvent
+from .scenario_snapshot import ScenarioSnapshot
 
 # Goal Models
 from .goal import Goal, GoalType, GoalPriority, GoalStatus

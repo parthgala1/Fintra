@@ -2,7 +2,8 @@
 
 import { Budget, BudgetReport, Recommendation } from "@/lib/api"
 import { formatINR } from "@/lib/utils"
-import { AlertTriangle, TrendingUp, Zap, CheckCircle, RefreshCw } from "lucide-react"
+import { TrendingUp, Zap, CheckCircle, RefreshCw, BarChart3 } from "lucide-react"
+import { ContextualHelpTooltip } from "./ContextualHelpTooltip"
 
 interface ImpactPanelProps {
   budgetId: string
@@ -34,272 +35,158 @@ export function ImpactPanel({
     )
   }
 
-  if (!budget) {
+  if (!budget || !report) {
     return null
   }
 
-  // Calculate metrics
-  const savingsRate = report?.savings_rate ?? calculateSavingsRate(budget)
-  // Investments count as savings — show actual savings progress from the report
-  const actualSavings = report?.actual_savings ?? null
-  const budgetedSavings = report?.budgeted_savings ?? budget.savings_amount
-  const savingsProgress =
-    budgetedSavings > 0 && actualSavings !== null
-      ? (actualSavings / budgetedSavings) * 100
-      : null
-  const needsRatio = budget.needs_percentage
-  const wantsRatio = budget.wants_percentage
+  // Calculate key metrics
+  const totalSpent = report.total_spent || 0
+  const totalBudgeted = report.total_budgeted || budget.total_amount || 0
+  const remaining = totalBudgeted - totalSpent
+  const percentageUsed = totalBudgeted > 0 ? (totalSpent / totalBudgeted) * 100 : 0
 
-  // Determine violations
-  const violations = getViolations(budget, savingsRate)
+  const actualSavings = report.actual_savings || 0
+  const budgetedSavings = report.budgeted_savings || budget.savings_amount || 0
+  const savingsProgress =
+    budgetedSavings > 0 ? (actualSavings / budgetedSavings) * 100 : 0
+
+  const savingsRate = totalBudgeted > 0 ? (actualSavings / totalBudgeted) * 100 : 0
 
   return (
     <div className="space-y-6">
-      {/* Metrics Grid */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <MetricCard
-          title="Savings Rate"
-          value={`${savingsRate.toFixed(1)}%`}
-          status={savingsRate >= 20 ? "good" : "warning"}
-          description={savingsRate >= 20 ? "On track" : "Below 20% target"}
-          icon={TrendingUp as any}
-        />
-        <MetricCard
-          title="Savings (incl. Investments)"
-          value={
-            savingsProgress !== null
-              ? `${savingsProgress.toFixed(1)}%`
-              : `${budget.savings_percentage.toFixed(1)}%`
-          }
-          status={
-            savingsProgress !== null
-              ? savingsProgress >= 80
-                ? "good"
-                : savingsProgress >= 50
-                  ? "neutral"
-                  : "warning"
-              : budget.savings_percentage >= 20
-                ? "good"
-                : "neutral"
-          }
-          description={
-            savingsProgress !== null
-              ? `${formatINR(actualSavings!, 0)} of ${formatINR(budgetedSavings, 0)}`
-              : "Investments included"
-          }
-          icon={Zap as any}
-        />
-        <MetricCard
-          title="Needs Ratio"
-          value={`${needsRatio.toFixed(1)}%`}
-          status={needsRatio <= 50 ? "good" : "warning"}
-          description={needsRatio <= 50 ? "Within 50%" : "Over 50%"}
-          icon={CheckCircle}
-        />
-        <MetricCard
-          title="Wants Ratio"
-          value={`${wantsRatio.toFixed(1)}%`}
-          status={wantsRatio <= 30 ? "good" : "warning"}
-          description={wantsRatio <= 30 ? "Controlled" : "Above 30%"}
-          icon={AlertTriangle as any}
-        />
-      </div>
-
-      {/* Violations Section */}
-      {violations.length > 0 && (
-        <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-6 backdrop-blur-sm">
-          <div className="mb-4 flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-red-400" />
-            <h3 className="font-semibold text-red-400">🔴 VIOLATIONS</h3>
+      {/* 3 Key Metric Cards */}
+      <div className="grid gap-4 md:grid-cols-3">
+        {/* Card 1: Remaining Budget */}
+        <div className="relative rounded-2xl border border-green-500/20 bg-green-500/5 p-6 backdrop-blur-sm">
+          <div className="absolute top-4 right-4">
+            <ContextualHelpTooltip
+              title="Remaining Budget"
+              description="The amount of your monthly budget that you haven't spent yet. This is calculated as: Total Budget - Amount Spent So Far."
+            />
           </div>
-          <div className="space-y-3">
-            {violations.map((violation, idx) => (
-              <ViolationItem key={idx} violation={violation} />
-            ))}
+
+          <div className="flex items-start gap-3 mb-3">
+            <BarChart3 className="h-5 w-5 text-green-400 mt-0.5" />
+            <h3 className="text-sm font-medium text-slate-400">Remaining Budget</h3>
+          </div>
+
+          <p className="text-3xl font-bold text-white mb-2">{formatINR(remaining, 0)}</p>
+          <p className="text-sm text-green-300 mb-3">
+            {(100 - percentageUsed).toFixed(0)}% of ₹{formatINR(totalBudgeted, 0)} left
+          </p>
+
+          <div className="w-full bg-slate-700/50 rounded-full h-2 overflow-hidden">
+            <div
+              className="h-full bg-green-500 transition-all duration-300"
+              style={{ width: `${100 - percentageUsed}%` }}
+            />
           </div>
         </div>
-      )}
 
-      {/* Recommendations Section */}
+        {/* Card 2: Savings Progress */}
+        <div className="relative rounded-2xl border border-blue-500/20 bg-blue-500/5 p-6 backdrop-blur-sm">
+          <div className="absolute top-4 right-4">
+            <ContextualHelpTooltip
+              title="Savings Progress"
+              description="Shows how much you've actually saved or invested compared to your savings goal. Includes investments and other savings categories."
+            />
+          </div>
+
+          <div className="flex items-start gap-3 mb-3">
+            <TrendingUp className="h-5 w-5 text-blue-400 mt-0.5" />
+            <h3 className="text-sm font-medium text-slate-400">Savings Progress</h3>
+          </div>
+
+          <p className="text-3xl font-bold text-white mb-2">
+            {formatINR(actualSavings, 0)}
+          </p>
+          <p className="text-sm text-blue-300 mb-3">
+            {savingsProgress.toFixed(0)}% of ₹{formatINR(budgetedSavings, 0)} goal
+          </p>
+
+          <div className="w-full bg-slate-700/50 rounded-full h-2 overflow-hidden">
+            <div
+              className={`h-full transition-all duration-300 ${
+                savingsProgress >= 80 ? "bg-green-500" : "bg-blue-500"
+              }`}
+              style={{ width: `${Math.min(savingsProgress, 100)}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Card 3: Savings Rate */}
+        <div className="relative rounded-2xl border border-purple-500/20 bg-purple-500/5 p-6 backdrop-blur-sm">
+          <div className="absolute top-4 right-4">
+            <ContextualHelpTooltip
+              title="Savings Rate"
+              description="The percentage of your total budget that you're saving. Higher is better. Target: 20% or more."
+            />
+          </div>
+
+          <div className="flex items-start gap-3 mb-3">
+            <Zap className="h-5 w-5 text-purple-400 mt-0.5" />
+            <h3 className="text-sm font-medium text-slate-400">Savings Rate</h3>
+          </div>
+
+          <p className="text-3xl font-bold text-white mb-2">{savingsRate.toFixed(1)}%</p>
+          <p
+            className={`text-sm mb-3 ${
+              savingsRate >= 20 ? "text-green-300" : "text-yellow-300"
+            }`}
+          >
+            {savingsRate >= 20 ? "✓ On target" : "Below 20% target"}
+          </p>
+
+          <div className="w-full bg-slate-700/50 rounded-full h-2 overflow-hidden">
+            <div
+              className={`h-full transition-all duration-300 ${
+                savingsRate >= 20 ? "bg-green-500" : "bg-yellow-500"
+              }`}
+              style={{ width: `${Math.min(savingsRate, 100)}%` }}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Recommendations Section (if any) */}
       {recommendations.length > 0 && (
         <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-sm">
           <div className="mb-4 flex items-center gap-2">
             <Zap className="h-5 w-5 text-yellow-400" />
-            <h3 className="font-semibold text-white">💡 WHAT SHOULD I DO?</h3>
+            <h3 className="font-semibold text-white">💡 Recommendations</h3>
           </div>
-          <div className="space-y-4">
-            {recommendations.slice(0, 3).map((rec, idx) => (
-              <RecommendationCard key={rec.id || idx} recommendation={rec} />
+          <div className="space-y-3">
+            {recommendations.slice(0, 2).map((rec, idx) => (
+              <div
+                key={rec.id || idx}
+                className="rounded-lg border border-white/10 bg-white/5 p-4"
+              >
+                <p className="font-medium text-white mb-1">{rec.title}</p>
+                <p className="text-sm text-slate-400">{rec.description}</p>
+              </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* No Violations, All Good */}
-      {violations.length === 0 && recommendations.length === 0 && (
+      {/* Generate Recommendations Button */}
+      {recommendations.length === 0 && onGenerateRecommendations && (
         <div className="rounded-2xl border border-green-500/20 bg-green-500/5 p-6 text-center backdrop-blur-sm">
           <CheckCircle className="mx-auto mb-3 h-8 w-8 text-green-400" />
-          <p className="text-green-400 font-semibold">Your budget is on track!</p>
-          <p className="text-sm text-green-400/70 mb-4">Keep maintaining these spending habits.</p>
-          {onGenerateRecommendations && (
-            <button
-              onClick={onGenerateRecommendations}
-              disabled={isGenerating}
-              className="inline-flex items-center gap-2 rounded-xl border border-green-500/30 bg-green-500/10 px-4 py-2 text-sm font-medium text-green-300 transition hover:bg-green-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              <RefreshCw className={`h-4 w-4 ${isGenerating ? "animate-spin" : ""}`} />
-              {isGenerating ? "Generating..." : "Generate Personalised Recommendations"}
-            </button>
-          )}
+          <p className="text-green-400 font-semibold mb-2">Budget looks balanced!</p>
+          <p className="text-sm text-green-400/70 mb-4">
+            Generate AI recommendations for personalized insights.
+          </p>
+          <button
+            onClick={onGenerateRecommendations}
+            disabled={isGenerating}
+            className="inline-flex items-center gap-2 rounded-xl border border-green-500/30 bg-green-500/10 px-4 py-2 text-sm font-medium text-green-300 transition hover:bg-green-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <RefreshCw className={`h-4 w-4 ${isGenerating ? "animate-spin" : ""}`} />
+            {isGenerating ? "Generating..." : "Generate Recommendations"}
+          </button>
         </div>
       )}
     </div>
   )
-}
-
-interface MetricCardProps {
-  title: string
-  value: string
-  status: "good" | "warning" | "neutral"
-  description: string
-  icon: any
-}
-
-function MetricCard({ title, value, status, description, icon: Icon }: MetricCardProps) {
-  const bgColor =
-    status === "good"
-      ? "bg-green-500/10 border-green-500/20"
-      : status === "warning"
-        ? "bg-red-500/10 border-red-500/20"
-        : "bg-blue-500/10 border-blue-500/20"
-
-  const textColor =
-    status === "good"
-      ? "text-green-400"
-      : status === "warning"
-        ? "text-red-400"
-        : "text-blue-400"
-
-  return (
-    <div className={`rounded-xl border ${bgColor} p-4 backdrop-blur-sm`}>
-      <div className="mb-3 flex items-center justify-between">
-        <p className="text-sm font-medium text-slate-400">{title}</p>
-        <Icon className={`h-4 w-4 ${textColor}`} />
-      </div>
-      <p className={`text-2xl font-bold ${textColor}`}>{value}</p>
-      <p className="mt-1 text-xs text-slate-500">{description}</p>
-    </div>
-  )
-}
-
-interface ViolationItemProps {
-  violation: {
-    type: string
-    message: string
-    severity: "high" | "medium" | "low"
-  }
-}
-
-function ViolationItem({ violation }: ViolationItemProps) {
-  return (
-    <div className="flex items-start gap-3 rounded-lg bg-red-500/10 p-3">
-      <div className="mt-1 h-2 w-2 flex-shrink-0 rounded-full bg-red-400" />
-      <div>
-        <p className="text-sm font-medium text-red-300">{violation.message}</p>
-      </div>
-    </div>
-  )
-}
-
-interface RecommendationCardProps {
-  recommendation: Recommendation
-}
-
-function RecommendationCard({ recommendation }: RecommendationCardProps) {
-  let actionSteps: string[] = []
-  try {
-    if (recommendation.action_steps && typeof recommendation.action_steps === "string") {
-      actionSteps = JSON.parse(recommendation.action_steps)
-    }
-  } catch {
-    actionSteps = []
-  }
-
-  return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <div className="mb-2 flex items-start justify-between">
-        <h4 className="font-semibold text-white">{recommendation.title}</h4>
-        {recommendation.potential_savings && (
-          <span className="text-sm font-bold text-green-400">
-            Save {formatINR(recommendation.potential_savings, 0)}
-          </span>
-        )}
-      </div>
-
-      <p className="mb-3 text-sm text-slate-400">{recommendation.description}</p>
-
-      {actionSteps.length > 0 && (
-        <div className="mb-3 space-y-2">
-          <p className="text-xs font-medium text-slate-500">Action Steps:</p>
-          <ol className="list-inside space-y-1 text-xs text-slate-400">
-            {actionSteps.map((step, idx) => (
-              <li key={idx} className="list-decimal">
-                {step}
-              </li>
-            ))}
-          </ol>
-        </div>
-      )}
-
-      <button className="w-full rounded-lg bg-green-500/20 py-2 text-sm font-medium text-green-400 transition-colors hover:bg-green-500/30">
-        Implement
-      </button>
-    </div>
-  )
-}
-
-// Helper Functions
-function calculateSavingsRate(budget: Budget): number {
-  // Formula: savings_rate = (savings_amount / total_amount) * 100
-  if (budget.total_amount <= 0) return 0
-  return (budget.savings_amount / budget.total_amount) * 100
-}
-
-interface Violation {
-  type: string
-  message: string
-  severity: "high" | "medium" | "low"
-}
-
-function getViolations(budget: Budget, savingsRate: number): Violation[] {
-  const violations: Violation[] = []
-
-  // Check needs ratio (should be <= 50%)
-  if (budget.needs_percentage > 50) {
-    violations.push({
-      type: "needs_over_budget",
-      message: `Needs spending at ${budget.needs_percentage.toFixed(1)}% (target: 50% or less)`,
-      severity: "high",
-    })
-  }
-
-  // Check wants ratio (should be <= 30%)
-  if (budget.wants_percentage > 30) {
-    violations.push({
-      type: "wants_over_budget",
-      message: `Wants spending at ${budget.wants_percentage.toFixed(1)}% (target: 30% or less)`,
-      severity: "medium",
-    })
-  }
-
-  // Check savings rate (should be >= 20%)
-  if (savingsRate < 20) {
-    violations.push({
-      type: "savings_under_target",
-      message: `Savings rate at ${savingsRate.toFixed(1)}% (target: 20% or more)`,
-      severity: "high",
-    })
-  }
-
-  return violations
 }

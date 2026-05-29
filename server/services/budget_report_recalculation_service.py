@@ -11,7 +11,7 @@ from models.budget_category import BudgetCategory
 from models.budget_category_breakdown import BudgetCategoryBreakdown
 from models.budget_report import BudgetReport
 from models.category import Category, CategoryType
-from models.transaction import Transaction, TransactionStatus, TransactionType
+from models.transaction import Transaction, TransactionStatus, TransactionType, DirectionType
 from services.budget_calculator import BudgetCalculator
 
 logger = logging.getLogger(__name__)
@@ -153,7 +153,7 @@ class BudgetReportRecalculationService:
         period_start: datetime,
         period_end: datetime,
     ) -> dict[CategoryType, Decimal]:
-        rows = (
+        expense_rows = (
             db.query(Category.category_type, func.coalesce(func.sum(Transaction.amount), 0))
             .join(Category, Transaction.category_id == Category.id)
             .filter(
@@ -162,6 +162,23 @@ class BudgetReportRecalculationService:
                 Transaction.transaction_date <= period_end,
                 Transaction.transaction_type == TransactionType.EXPENSE,
                 Transaction.status == TransactionStatus.POSTED,
+                # Exclude transactions reclassified as transfers
+                Transaction.direction_type != DirectionType.TRANSFER,
+                Category.category_type.in_([CategoryType.NEEDS, CategoryType.WANTS, CategoryType.SAVINGS]),
+            )
+            .group_by(Category.category_type)
+            .all()
+        )
+        income_rows = (
+            db.query(Category.category_type, func.coalesce(func.sum(Transaction.amount), 0))
+            .join(Category, Transaction.category_id == Category.id)
+            .filter(
+                Transaction.user_id == user_id,
+                Transaction.transaction_date >= period_start,
+                Transaction.transaction_date <= period_end,
+                Transaction.transaction_type == TransactionType.INCOME,
+                Transaction.status == TransactionStatus.POSTED,
+                Transaction.direction_type != DirectionType.TRANSFER,
                 Category.category_type.in_([CategoryType.NEEDS, CategoryType.WANTS, CategoryType.SAVINGS]),
             )
             .group_by(Category.category_type)
@@ -173,8 +190,22 @@ class BudgetReportRecalculationService:
             CategoryType.WANTS: Decimal("0"),
             CategoryType.SAVINGS: Decimal("0"),
         }
-        for category_type, total in rows:
-            totals[category_type] = Decimal(str(total or 0)).quantize(Decimal("0.01"))
+        gross_by_type: dict[CategoryType, Decimal] = {
+            CategoryType.NEEDS: Decimal("0"),
+            CategoryType.WANTS: Decimal("0"),
+            CategoryType.SAVINGS: Decimal("0"),
+        }
+        refunds_by_type: dict[CategoryType, Decimal] = {
+            CategoryType.NEEDS: Decimal("0"),
+            CategoryType.WANTS: Decimal("0"),
+            CategoryType.SAVINGS: Decimal("0"),
+        }
+        for category_type, total in expense_rows:
+            gross_by_type[category_type] = Decimal(str(total or 0)).quantize(Decimal("0.01"))
+        for category_type, total in income_rows:
+            refunds_by_type[category_type] = Decimal(str(total or 0)).quantize(Decimal("0.01"))
+        for ct in [CategoryType.NEEDS, CategoryType.WANTS, CategoryType.SAVINGS]:
+            totals[ct] = max(gross_by_type[ct] - refunds_by_type[ct], Decimal("0"))
         return totals
 
     @staticmethod
@@ -228,7 +259,7 @@ class BudgetReportRecalculationService:
         )
         category_by_id = {c.id: c for c in categories}
 
-        actual_rows = (
+        expense_rows = (
             db.query(
                 Transaction.category_id,
                 func.coalesce(func.sum(Transaction.amount), 0),
@@ -241,12 +272,39 @@ class BudgetReportRecalculationService:
                 Transaction.transaction_date <= period_end,
                 Transaction.transaction_type == TransactionType.EXPENSE,
                 Transaction.status == TransactionStatus.POSTED,
+                Transaction.direction_type != DirectionType.TRANSFER,
             )
             .group_by(Transaction.category_id)
             .all()
         )
-        actual_by_category = {row[0]: Decimal(str(row[1] or 0)).quantize(Decimal("0.01")) for row in actual_rows}
-        count_by_category = {row[0]: int(row[2] or 0) for row in actual_rows}
+        income_rows = (
+            db.query(
+                Transaction.category_id,
+                func.coalesce(func.sum(Transaction.amount), 0),
+                func.count(Transaction.id),
+            )
+            .filter(
+                Transaction.user_id == user_id,
+                Transaction.category_id.in_(category_ids),
+                Transaction.transaction_date >= period_start,
+                Transaction.transaction_date <= period_end,
+                Transaction.transaction_type == TransactionType.INCOME,
+                Transaction.status == TransactionStatus.POSTED,
+                Transaction.direction_type != DirectionType.TRANSFER,
+            )
+            .group_by(Transaction.category_id)
+            .all()
+        )
+        income_by_category = {row[0]: Decimal(str(row[1] or 0)).quantize(Decimal("0.01")) for row in income_rows}
+        income_count_by_category = {row[0]: int(row[2] or 0) for row in income_rows}
+        actual_by_category: dict = {}
+        count_by_category: dict = {}
+        for row in expense_rows:
+            cat_id = row[0]
+            gross = Decimal(str(row[1] or 0)).quantize(Decimal("0.01"))
+            refunds = income_by_category.get(cat_id, Decimal("0"))
+            actual_by_category[cat_id] = max(gross - refunds, Decimal("0"))
+            count_by_category[cat_id] = int(row[2] or 0) + income_count_by_category.get(cat_id, 0)
 
         for allocation in allocations:
             category = category_by_id.get(allocation.category_id)
