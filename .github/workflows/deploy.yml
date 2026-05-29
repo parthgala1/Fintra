@@ -36,7 +36,7 @@ jobs:
 
             echo "Waiting for API health endpoint..."
             for i in {1..20}; do
-              if curl -fsS http://localhost:8000/health >/dev/null; then
+              if curl -fsS http://13.202.28.196:8000/health >/dev/null; then
                 echo "Health check passed: API is running"
                 break
               fi
