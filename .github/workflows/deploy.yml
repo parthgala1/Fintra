@@ -36,4 +36,22 @@ jobs:
 
             docker compose up -d --build
 
+            echo "Waiting for API health endpoint..."
+            for i in {1..20}; do
+              if curl -fsS http://localhost:8000/health >/dev/null; then
+                echo "Health check passed: API is running"
+                break
+              fi
+
+              if [ "$i" -eq 20 ]; then
+                echo "Health check failed after multiple attempts"
+                docker compose ps
+                docker compose logs backend --tail=200
+                exit 1
+              fi
+
+              echo "Health check attempt $i failed, retrying in 5s..."
+              sleep 5
+            done
+
             docker image prune -f

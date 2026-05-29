@@ -14,6 +14,9 @@ from config import settings
 from data.seed_categories import create_system_categories
 from database import Base, SessionLocal, engine
 
+# Register all model tables on Base.metadata before any create_all/validation logic.
+import models  # noqa: F401
+
 logger = logging.getLogger(__name__)
 
 _ALEMBIC_VERSION_TABLE = "alembic_version"
@@ -112,6 +115,15 @@ def _validate_existing_schema_for_stamp() -> None:
         )
 
 
+def _missing_required_tables() -> list[str]:
+    with engine.connect() as connection:
+        inspector = inspect(connection)
+        existing_tables = set(inspector.get_table_names())
+
+    expected_tables = set(Base.metadata.tables.keys())
+    return sorted(expected_tables - existing_tables)
+
+
 def run_startup_database_initialization() -> dict:
     """Run connectivity check, migration/bootstrapping, and system seeding."""
     logger.info("Starting database initialization workflow")
@@ -120,6 +132,7 @@ def run_startup_database_initialization() -> dict:
 
     alembic_cfg = _build_alembic_config()
     state_before = _migration_state(alembic_cfg)
+    missing_before = _missing_required_tables()
     has_pending_migrations = state_before["current_revision"] not in set(state_before["head_revisions"])
     logger.info(
         "Migration state before initialization",
@@ -129,6 +142,7 @@ def run_startup_database_initialization() -> dict:
             "pending_migrations": has_pending_migrations,
             "has_existing_schema": state_before["has_existing_schema"],
             "existing_table_count": state_before["existing_table_count"],
+            "missing_required_table_count": len(missing_before),
         },
     )
 
@@ -142,7 +156,19 @@ def run_startup_database_initialization() -> dict:
             _validate_existing_schema_for_stamp()
             command.stamp(alembic_cfg, "head")
             logger.info("Stamped unversioned schema to Alembic head")
+        elif state_before["current_revision"] and not state_before["has_existing_schema"]:
+            logger.warning(
+                "Alembic revision exists but no application tables were found. Rebuilding schema from metadata and stamping head."
+            )
+            _bootstrap_empty_database_to_head(alembic_cfg)
         else:
+            if missing_before:
+                preview = ", ".join(missing_before[:8])
+                raise DatabaseInitializationError(
+                    "Database is versioned but schema is incomplete. "
+                    f"Missing tables (sample): {preview}. "
+                    "Refusing automatic migration because this indicates a partial/corrupt schema state."
+                )
             command.upgrade(alembic_cfg, "head")
             logger.info("Alembic upgrade to head completed")
     except Exception as exc:  # noqa: BLE001
