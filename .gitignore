@@ -46,5 +46,5 @@ __pycache__
 /server/uploads
 
 .vscode
-.github
+.github/agents
 /data
