@@ -1,9 +1,6 @@
 name: Deploy Fintra
 
 on:
-  push:
-    branches:
-      - test
   pull_request:
     branches:
       - test
@@ -12,7 +9,7 @@ on:
 
 jobs:
   deploy:
-    if: github.event_name == 'push' || github.event.pull_request.merged == true
+    if: github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'main'
     runs-on: ubuntu-latest
 
     steps:
@@ -28,11 +25,15 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
 
           script: |
-            cd /opt/fintra
+            set -e
+            cd /home/ubuntu/apps/Fintra
+            pwd
+            ngit status
+            ls -la
 
-            git pull origin test
-
-            docker compose pull
+            git fetch origin
+            git checkout test
+            git reset --hard origin/test
 
             docker compose up -d --build
 
