@@ -11,7 +11,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_URL=http://13.202.28.196:8000
       - HOSTNAME=0.0.0.0
       - NODE_ENV=development
     restart: unless-stopped
@@ -31,8 +31,10 @@ services:
       - REDIS_URL=redis://redis:6379
     restart: unless-stopped
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   postgres:
     image: postgres:15

@@ -21,12 +21,7 @@ from routers.goal import router as goal_router
 from routers.recommendation import router as recommendation_router
 from routers.user_preferences import router as user_preferences_router
 from config import settings
-from database import Base, engine, SessionLocal
-
-# Import all models to register them with SQLAlchemy Base
-# This ensures all models are available for table creation
-import models
-from data.seed_categories import create_system_categories
+from db_init import run_startup_database_initialization, DatabaseInitializationError
 
 # Setup logging
 logging.basicConfig(
@@ -41,23 +36,19 @@ async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown."""
     # Startup
     logger.info("Starting up Fintra API...")
-    
-    # Create database tables (for development)
-    # In production, use Alembic migrations
+
     try:
-        Base.metadata.create_all(bind=engine)
-        logger.info("Database tables created successfully")
-    except Exception as e:
-        logger.error(f"Error creating database tables: {e}")
-    
-    # Seed system categories
-    try:
-        db = SessionLocal()
-        created_categories = create_system_categories(db)
-        logger.info(f"System categories initialized - {len(created_categories)} new categories created")
-        db.close()
-    except Exception as e:
-        logger.error(f"Error seeding system categories: {e}")
+        db_status = run_startup_database_initialization()
+        logger.info(
+            "Startup database initialization complete",
+            extra={
+                "current_revision": db_status["current_revision"],
+                "head_revisions": db_status["head_revisions"],
+            },
+        )
+    except DatabaseInitializationError:
+        logger.exception("Application startup failed during DB initialization")
+        raise
     
     yield
     
