@@ -4,15 +4,9 @@ on:
   push:
     branches:
       - test
-  pull_request:
-    branches:
-      - test
-    types:
-      - closed
 
 jobs:
   deploy:
-    if: github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'main'
     runs-on: ubuntu-latest
 
     steps:
