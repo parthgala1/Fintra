@@ -22,6 +22,9 @@ from routers.recommendation import router as recommendation_router
 from routers.user_preferences import router as user_preferences_router
 from config import settings
 from db_init import run_startup_database_initialization, DatabaseInitializationError
+from database import engine
+from sqlalchemy import text
+from fastapi import HTTPException
 
 # Setup logging
 logging.basicConfig(
@@ -36,9 +39,11 @@ async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown."""
     # Startup
     logger.info("Starting up Fintra API...")
+    app.state.db_initialized = False
 
     try:
         db_status = run_startup_database_initialization()
+        app.state.db_initialized = True
         logger.info(
             "Startup database initialization complete",
             extra={
@@ -63,6 +68,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+app.state.db_initialized = False
 
 # Configure CORS
 app.add_middleware(
@@ -104,7 +110,16 @@ app.include_router(user_preferences_router, prefix="/api")
 @app.get("/health")
 def health_check():
     """Health check endpoint."""
-    return {"status": "ok", "service": "fintra-api"}
+    if not getattr(app.state, "db_initialized", False):
+        raise HTTPException(status_code=503, detail="Database is not initialized")
+
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Database health check failed: {exc}") from exc
+
+    return {"status": "ok", "service": "fintra-api", "database_initialized": True}
 
 
 @app.get("/")

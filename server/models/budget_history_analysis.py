@@ -1,6 +1,6 @@
 import uuid
 from datetime import date
-from sqlalchemy import Column, DateTime, String, Numeric, Date, JSON, Index, ForeignKey
+from sqlalchemy import Column, DateTime, String, Numeric, Date, JSON, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -59,7 +59,3 @@ class BudgetHistoryAnalysis(Base):
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     
-    __table_args__ = (
-        Index("ix_budget_history_analysis_budget_id", "budget_id"),
-        Index("ix_budget_history_analysis_user_id", "user_id"),
-    )
