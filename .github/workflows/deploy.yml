@@ -28,7 +28,7 @@ jobs:
             set -e
             cd /home/ubuntu/apps/Fintra
             pwd
-            ngit status
+            git status
             ls -la
 
             git fetch origin
